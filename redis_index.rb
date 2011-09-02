@@ -23,16 +23,16 @@ module RedisIndex
       if !$redis.exists @cache_key
         @temp_set << ":#{Digest::SHA1.hexdigest @cache_key}"
         puts "queue", @queue
-        @queue.each { |f| puts f; puts f.call }
+        @queue.each { |f| f.call }
       end
       $redis.sort @temp_set, {:store => @cache_key }
       self
     end
     
-    def results(limit, offset, &block)
-      res = $redis.lrange(@cache_key, offset || 0, limit && (offset || 0 + limit))
+    def results(start=0, finish=NaN, &block)
+      res = $redis.lrange(@cache_key, start, finish)
       if block_given?
-        res.map! block
+        res.map! &block
       end
       res
     end
@@ -47,11 +47,13 @@ module RedisIndex
       first = @queue.length==0
       @cache_key << ":#{op}=#{arg.join('&')}"
       @queue << lambda do
-        puts op, first
-        arg.unshift(@temp_set) unless first
-        $redis.call(op, @temp_set, *arg)
+        $redis.send(op, @temp_set, *arg)
       end
       self
+    end
+    
+    def length
+      $redis.llen $cache_key
     end
   end
   
