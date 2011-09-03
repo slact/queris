@@ -1,43 +1,94 @@
 require 'rubygems'
 
 module RedisIndex
-  require 'digest/sha1'
-  def self.digest(val)
-    Digest::SHA1.hexdigest val.to_s
+  
+  class Index
+    attr_accessor :name, :type, :attribute, :redis, :model
+    def initialize(arg={})
+      arg.each do |opt, val|
+        instance_variable_set "@#{opt}".to_sym, val
+        self.class.send :attr_accessor, "#{opt}".to_sym ##might be a problem
+      end
+      @type ||= "string"
+      @name ||= @attribute
+      @attribute ||= @name
+      @name = @name.to_sym
+      @attribute = @attribute.to_sym
+      @redis ||= $redis
+      raise Exception, "Model not passed to index." unless @model
+    end
+    
+    require 'digest/sha1'
+    def digest(val)
+      Digest::SHA1.hexdigest val.to_s
+    end
+    
+    def value_is(obj)
+      obj.send @attribute
+    end
+    def value_was(obj)
+      obj.send "#{@attribute}_was"
+    end
+    def key(val, prefix=nil)
+      "#{prefix || @model.redis_prefix}#{self.class.name}:#{@name}=#{digest val}"      
+    end
+    def add(val, id)
+      @redis.sadd(key(val), id)
+    end
+    def remove(val, id)
+      @redis.sremove(key(val), id)
+    end
   end
+  
+  
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
   class Query
-    def initialize(key_prefix, *arg)
+    def initialize(arg)
       @queue = []
-      @prefix = key_prefix
-      @cache_key = "#{@prefix}:query_cache"
-      @temp_set = "#{@prefix}:temp_set"
-      @sort_options = { :store => @cache_key }
+      @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
+      @sort_options = {}
+      @redis=arg[:redis] || $redis
       self
     end
     
-    def union(*arg)
-      build_query :sunionstore, *arg
+    require 'digest/sha1'
+    def digest(val)
+      Digest::SHA1.hexdigest val.to_s
     end
     
-    def intersect(*arg)
-      build_query :sinterstore, *arg
+    def union(index, val)
+      build_query :sunionstore, index, val
     end
     
-    def query
-      if !$redis.exists @cache_key
-        @temp_set << ":#{RedisIndex.digest @cache_key}"
-        @queue.each { |f| f.call }
+    def intersect(index, val)
+      build_query :sinterstore, index, val
+    end
+    
+    def query(force=nil)
+      temp_set = "#{@redis_prefix}temp_set:#{digest results_key}"
+      if force || !@redis.exists(results_key)
+        @redis.del temp_set if force
+        first = @queue.first
+        @queue.each do |q|
+          if first!=q
+            @redis.send q[:operation], temp_set, temp_set, *q[:key]
+          else
+            @redis.send q[:operation], temp_set, *q[:key]
+          end
+        end
       end
-      $redis.expire @temp_set, 30 #30-second search set timeout
-      $redis.sort @temp_set, {:store => @cache_key }
-      $redis.expire @cache_key, 5*60 
+      @redis.expire @temp_set, 10 #10-second search set timeout
+      
+      @sort_options[:store] ||= results_key
+      @redis.sort temp_set, @sort_options
+      
+      @redis.expire @cache_key, 5*60 
       self
     end
     
-    def results(start=0, finish=NaN, &block)
-      res = $redis.lrange(@cache_key, start, finish)
+    def results(*arg, &block)
+      res = @redis.lrange(results_key, *arg)
       if block_given?
         res.map! &block
       end
@@ -45,22 +96,53 @@ module RedisIndex
     end
     
     def sort(opts)
-      opts.store = @cache_key
       @sort_options = opts
       self
     end
 
-    def build_query(op, *arg)
-      first = @queue.length==0
-      @cache_key << ":#{op}=#{RedisIndex.digest arg.sort!.join('&')}"
-      @queue << lambda do
-        $redis.send(op, @temp_set, *arg)
+    def build_query(op, index, value)
+      @results_key = nil
+      if @queue.length == 0 || @queue.last[:operation]!=op
+         @queue.push :operation => op, :index => [], :value => [], :key =>[], :results_key => []
       end
+      last = @queue.last
+      last[:index].push index
+      last[:value].push value
+      last[:key].push index.key value
+      last[:results_key].push index.key value, ""
       self
     end
     
+    def results_key
+      @results_key ||= @redis_prefix + "results:" + ( @queue.map { |q| "#{q[:operation]}:" + q[:results_key].sort.join("&")}.join("&"))
+      @results_key
+    end
+    
     def length
-      $redis.llen @cache_key
+      @redis.llen results_key
+    end
+    alias :size :length
+    alias :count :length
+    
+  end
+  
+  class ActiveRecordQuery < RedisIndex::Query
+    def initialize(arg)
+      @model = arg[:model]
+      super :prefix => @model.redis_prefix
+    end
+    
+    def results(limit, offset)
+      super limit, offset do |id| 
+        @model.find id
+      end
+    end
+    def get_index(index_name)
+      @model.redis_indices[index_name.to_sym]
+    end
+    def build_query(op, index_name, value)
+       index = get_index index_name
+       super op, index, value
     end
   end
   
@@ -70,25 +152,25 @@ module RedisIndex
     base.before_save :update_redis_indices
     base.before_destroy :delete_redis_indices
     base.after_initialize do 
+      
     end
 
   end
 
   module ClassMethods
     def index_attribute(arg={})
-      @redis_prefix ||= "Rails:" << Rails.application.class.parent.to_s << ":RedisIndex:"
+      @redis_prefix ||= "Rails:#{Rails.application.class.parent.to_s}:#{self.name}:"
       @redis_indices ||= {}
-      @redis_indices[arg[:name] || arg[:attribute]]= {
-        :type => arg[:type].to_s,
-        :prefix => arg[:prefix] || @redis_prefix,
-        :attribute => arg[:attribute].to_sym,
-        :name => arg[:name] || arg[:attribute],
-        :update => arg[:update].nil? ? true : arg[:update]
-      }
+      arg[:model] ||= self
+      new_index = RedisIndex::Index.new arg
+      redis_indices[new_index.name] = new_index
     end
-    def index_attr_for(model, attr, index_name, attr_type="string")
+    def index_attrribute_for(arg)
+      
       index_attribute(attr, attr_type, model.redis_prefix, index_name)
+      
       model.index_attribute(attr, attr_type, model.redis_prefix, index_name)
+      
     end
     def redis_indices
       @redis_indices
@@ -102,15 +184,9 @@ module RedisIndex
       end
       self
     end
-    
-    def redis_index_key(index_name, val, prefix=nil)
-      index = redis_indices[index_name.to_sym]
-      raise ArgumentError, "No such index " << index_name.to_s << "." unless index
-      "#{prefix || index[:prefix]}#{index[:name]}=#{RedisIndex.digest val}"
-    end
       
     def redis_query
-      query = ActiveRecordQuery.new self.redis_prefix, self
+      query = ActiveRecordQuery.new :model => self
       yield query if block_given?
       query
     end
@@ -123,23 +199,19 @@ module RedisIndex
     end
   end
   
-  def redis_index_key(index_name, val)
-    self.class.redis_index_key(index_name, val)
-  end
-  
   def create_redis_indices
     self.class.redis_indices.each do |index_name, index|
-      $redis.sadd(redis_index_key(index[:name], send(index[:attribute])), self.id) unless index[:dont_update]
+      index.add index.value_is(self), id
     end
   end
   #after_create :create_redis_indices
   
   def update_redis_indices
     self.class.redis_indices.each do |index_name, index|
-      attr_is, attr_was = send(index[:attribute]) , send("#{index[:attribute]}_was")
-      if attr_is != attr_was && !index[:dont_update]
-          $redis.srem(redis_index_key(index[:name], attr_was), self.id)
-          $redis.sadd(redis_index_key(index[:name], attr_is), self.id)
+      attr_is, attr_was = index.value_is(self), index.value_was(self)
+      if attr_is != attr_was
+          index.add attr_is, id 
+          index.remove attr_was, id
       end
     end
   end
@@ -147,29 +219,9 @@ module RedisIndex
   
   def delete_redis_indices
     self.class.redis_indices.each do |index_name, index|
-      $redis.srem(redis_index_key(index[:name], send(index[:attribute])), self.id) unless index[:dont_update]
+      index.remove index.value_is(self), id
     end
   end
   #before_destroy :delete_redis_indices
   
-  class ActiveRecordQuery < RedisIndex::Query
-    def initialize(prefix, model)
-      @model = model
-      super
-    end
-    
-    def union(attr, val)
-      super @model.redis_index_key(attr, val)
-    end
-    
-    def intersect(attr, val)
-       super @model.redis_index_key(attr, val)
-    end
-    
-    def results(limit, offset)
-      super limit, offset do |id| 
-        @model.find id
-      end
-    end
-  end
 end
