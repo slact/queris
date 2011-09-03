@@ -1,9 +1,13 @@
 require 'rubygems'
 
 module RedisIndex
+  require 'digest/sha1'
+  
+  def self.digest(val)
+    Digest::SHA1.hexdigest val.to_s
+  end
+  
   class Query
-    require 'digest/sha1'
-
     def initialize(key_prefix, *arg)
       @queue = []
       @prefix = key_prefix
@@ -23,7 +27,7 @@ module RedisIndex
     
     def query
       if !$redis.exists @cache_key
-        @temp_set << ":#{Digest::SHA1.hexdigest @cache_key}"
+        @temp_set << ":#{RedisIndex.digest @cache_key}"
         @queue.each { |f| f.call }
       end
       $redis.expire @temp_set, 30 #30-second search set timeout
@@ -48,7 +52,7 @@ module RedisIndex
 
     def build_query(op, *arg)
       first = @queue.length==0
-      @cache_key << ":#{op}=#{Digest::SHA1.hexdigest arg.sort!.join('&')}"
+      @cache_key << ":#{op}=#{RedisIndex.digest arg.sort!.join('&')}"
       @queue << lambda do
         $redis.send(op, @temp_set, *arg)
       end
@@ -71,12 +75,17 @@ module RedisIndex
   end
 
   module ClassMethods
-    def index_attribute(attr, attr_type="string", *rest)
+    def index_attribute(attr, attr_type="string", prefix=nil, index_name=nil)
       @redis_prefix ||= "Rails:" << Rails.application.class.parent.to_s << ":RedisIndex:"
       @redis_indices ||= {}
-      @redis_indices[attr.to_sym]= attr_type.to_s
+      @redis_indices[index_name || attr.to_sym]= {
+        :type => attr_type.to_s,
+        :prefix => prefix || @redis_prefix,
+        :attribute => attr.to_sym,
+        :name => index_name || attr
+      }
     end
-    def index_foreign_attribute(attr, attr_type)
+    def index_attr_for(model, attr, index_name, attr_type)
       #TODO
     end
     def redis_indices
@@ -92,8 +101,10 @@ module RedisIndex
       self
     end
     
-    def redis_index_key(attr, val, prefix=nil)
-      "#{prefix || redis_prefix}#{name}:#{attr}=#{Digest::SHA1.hexdigest val.to_s}"
+    def redis_index_key(index_name, val, prefix=nil)
+      index = redis_indices[index_name.to_sym]
+      raise ArgumentError, "No such index " << index_name.to_s << "." unless index
+      "#{prefix || index[:prefix]}#{index[:name]}#{RedisIndex.digest val}"
     end
       
     def redis_query
@@ -104,38 +115,37 @@ module RedisIndex
     
     def build_redis_indices
       res = self.find(:all).each do |row|
-          logger.info row
           row.create_redis_indices
       end
       self
     end
   end
   
-  def redis_index_key(attr, val)
-    self.class.redis_index_key(attr, val)
+  def redis_index_key(index_name, val)
+    self.class.redis_index_key(index_name, val)
   end
   
   def create_redis_indices
-    self.class.redis_indices.each do |attr, type|
-      $redis.sadd(redis_index_key(attr, send(attr)), self.id)
+    self.class.redis_indices.each do |index_name, index|
+      $redis.sadd(redis_index_key(index[:name], send(index[:attribute])), self.id)
     end
   end
   #after_create :create_redis_indices
   
   def update_redis_indices
-    self.class.redis_indices.each do |attr, type|
-      attr_is, attr_was = send(attr) , send("#{attr}_was")
+    self.class.redis_indices.each do |index_name, index|
+      attr_is, attr_was = send(index[:attribute]) , send("#{index[:attribute]}_was")
       if attr_is != attr_was
-          $redis.srem(redis_index_key(attr, attr_was), self.id)
-          $redis.sadd(redis_index_key(attr, attr_is), self.id)
+          $redis.srem(redis_index_key(index[:name], attr_was), self.id)
+          $redis.sadd(redis_index_key(index[:name], attr_is), self.id)
       end
     end
   end
   #before_save :update_redis_indices
   
   def delete_redis_indices
-    self.class.redis_indices.each do |attr, type|
-      $redis.srem(redis_index_key(attr, send(attr)), self.id)
+    self.class.redis_indices.each do |index_name, index|
+      $redis.srem(redis_index_key(index[:name], send(index[:attribute])), self.id)
     end
   end
   #before_destroy :delete_redis_indices
