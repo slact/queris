@@ -26,7 +26,8 @@ module RedisIndex
       @value.nil? ? value : @value.call(value)
     end
     def digest(value)
-      Digest::SHA1.hexdigest value.to_s
+      value
+      #Digest::SHA1.hexdigest value.to_s
     end
     def value_is(obj)
       obj.send @attribute
@@ -37,7 +38,7 @@ module RedisIndex
     def update(obj)
       val_is, val_was = value_is(obj), value_was(obj)
       if(val_is != val_was)
-        remove(val_was, obj)
+        remove(obj, val_was)
         add(obj)
       end
     end
@@ -64,7 +65,7 @@ module RedisIndex
       @redis.sadd set_key(val || obj.send(@attribute)), obj.send(@key)
     end
     def remove(obj, val = nil)
-      @redis.sremove set_key(val || obj.send(@attribute)), obj.send(@key)
+      @redis.srem set_key(val || obj.send(@attribute)), obj.send(@key)
     end
   end
   
