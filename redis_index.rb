@@ -62,10 +62,10 @@ module RedisIndex
       @keyf %[prefix || @redis_prefix || @model.redis_prefix, digest(val value)]
     end
     def add(obj, val = nil)
-      @redis.sadd set_key(val || obj.send(@attribute)), obj.send(@key)
+      @redis.sadd set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
     end
     def remove(obj, val = nil)
-      @redis.srem set_key(val || obj.send(@attribute)), obj.send(@key)
+      @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
     end
   end
   
@@ -83,14 +83,31 @@ module RedisIndex
     end
   end
   
-  class CustomIndex < SearchIndex
+  class PresenceIndex < SearchIndex
     def initialize(arg)
-      raise ArgumentError, "Missing required initialization attribute real_index for ForeignIndex." unless arg[:real_index]
       super arg
+      @counter_keyf = "#{@model.redis_prefix}#{self.class.name.sub /^.*::/, ""}:#{@name}:#{@attribute}=%s:counter"
+      @attribute = @key
+      @threshold ||= 1
     end
-    [:add, :remove, :update].each do |method_name|
-      define_method method_name, do |*arg|
-        send "#{method_name}_block", *arg
+    def digest(*arg)
+      "present"
+    end
+    def counter_key(obj, val=nil)
+      @counter_keyf % (val || value_is(obj))
+    end
+    def add(obj, value=nil)
+      k = @redis.incr counter_key(obj)
+      if k == @threshold
+        super obj
+      end
+    end
+    def remove(obj, value=nil)
+      ckey = counter_key obj
+      @redis.decr ckey
+      if @redis.get(ckey).to_i. < @threshold
+        @redis.del ckey
+        super obj
       end
     end
   end
@@ -274,12 +291,10 @@ module RedisIndex
       arg[:model].send :index_attribute, arg.merge(:index=> ForeignIndex, :real_index => index)
     end
     
-    def index_foreign_attribute(arg) #doesn't work yet.
-      raise Exception, "Not implemented"
-      arg[:model].class_eval do
-        include RedisIndex unless include? RedisIndex
-      end unless arg[:model].nil?
-      index_attribute_for
+    def index_attribute_from(arg) #doesn't work yet.
+      model = arg[:model]
+      model.send( :include, RedisIndex) unless model.include? RedisIndex
+      model.send(:index_attribute_for, arg.merge(:model => self))
     end
     
     def index_sort_attribute(arg)
