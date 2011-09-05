@@ -26,6 +26,7 @@ module RedisIndex
       @value.nil? ? value : @value.call(value)
     end
     def digest(value)
+      #value
       Digest::SHA1.hexdigest value.to_s
     end
     def value_is(obj)
