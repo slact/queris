@@ -1,4 +1,5 @@
 require 'rubygems'
+require 'digest/sha1'
 
 module RedisIndex
   
@@ -12,13 +13,14 @@ module RedisIndex
       @type ||= "string"
       @name ||= @attribute
       @attribute ||= @name
-      @name = @name.to_sym
-      @attribute = @attribute.to_sym
+      @name = @name.to_sym unless !@name
+      @attribute = @attribute.to_sym unless !@attribute
       @redis ||= $redis
+      @key ||= :id #object's key attribute (default is 'id')
+      @set_keyf ||= "#{@prefix || @redis_prefix || @model.redis_prefix}#{self.class.name}:#{@name}=%s"
       raise Exception, "Model not passed to index." unless @model
     end
     
-    require 'digest/sha1'
     def digest(val)
       Digest::SHA1.hexdigest val.to_s
     end
@@ -29,18 +31,44 @@ module RedisIndex
     def value_was(obj)
       obj.send "#{@attribute}_was"
     end
-    def key(val, prefix=nil)
-      "#{prefix || @model.redis_prefix}#{self.class.name}:#{@name}=#{digest val}"      
+    def set_key(val, prefix=nil)
+      @set_keyf % digest(val)
     end
-    def add(val, id)
-      @redis.sadd(key(val), id)
+    def add(val, obj)
+      @redis.sadd set_key(val), obj.send(@key) 
     end
-    def remove(val, id)
-      @redis.sremove(key(val), id)
+    def remove(val, obj)
+      @redis.sremove set_key(val), obj.send(@key)
+    end
+    def update(obj)
+      val_is, val_was = value_is(obj), value_was(obj)
+      if(val_is != val_was)
+        remove(val_was, obj)
+        add(val_is, obj)
+      end
+    end
+    def create(obj)
+      add(value_is(obj), obj)
+    end
+    def delete(obj)
+      remove(value_was(obj), obj)
     end
   end
   
-  
+  class ForeignIndex < Index
+    attr_accessor :real_index
+    def initialize(arg)
+      raise ArgumentError, "Missing required initialization attribute real_index for ForeignIndex." unless arg[:real_index]
+      super arg
+    end
+    def add(*arg) end
+    def remove(*arg) end
+    def value_is(*arg) end
+    def value_was(*arg) end
+    def set_key(*arg)
+      @real_index.set_key *arg
+    end
+  end
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
   class Query
@@ -87,8 +115,8 @@ module RedisIndex
       self
     end
     
-    def results(*arg, &block)
-      res = @redis.lrange(results_key, *arg)
+    def results(first=0, last="", &block)
+      res = @redis.lrange(results_key, first, last)
       if block_given?
         res.map! &block
       end
@@ -108,8 +136,8 @@ module RedisIndex
       last = @queue.last
       last[:index].push index
       last[:value].push value
-      last[:key].push index.key value
-      last[:results_key].push index.key value, ""
+      last[:key].push index.set_key value
+      last[:results_key].push index.set_key value, ""
       self
     end
     
@@ -132,8 +160,8 @@ module RedisIndex
       super :prefix => @model.redis_prefix
     end
     
-    def results(limit, offset)
-      super limit, offset do |id| 
+    def results(*arg)
+      super *arg do |id| 
         @model.find id
       end
     end
@@ -147,6 +175,16 @@ module RedisIndex
   end
   
   def self.included(base)
+    base.class_eval do
+      class << self
+        def redis_indices
+          @redis_indices||={}
+        end
+        def redis_prefix
+          @redis_prefix||="Rails:#{Rails.application.class.parent.to_s}:#{self.name}:"
+        end
+      end
+    end
     base.extend ClassMethods
     base.after_create :create_redis_indices
     base.before_save :update_redis_indices
@@ -159,25 +197,33 @@ module RedisIndex
 
   module ClassMethods
     def index_attribute(arg={})
-      @redis_prefix ||= "Rails:#{Rails.application.class.parent.to_s}:#{self.name}:"
-      @redis_indices ||= {}
-      arg[:model] ||= self
-      new_index = RedisIndex::Index.new arg
-      redis_indices[new_index.name] = new_index
+      arg[:model] ||= self unless arg.kind_of? RedisIndex::Index
+      new_index = (arg.kind_of? RedisIndex::Index) ? arg : RedisIndex::Index.new(arg)
+      redis_indices[new_index.name.to_sym] = new_index
     end
-    def index_attrribute_for(arg)
+    
+    def index_attribute_for(arg)
+      raise ArgumentError, "index_attribute_for requires :model argument" unless arg[:model]
       
-      index_attribute(attr, attr_type, model.redis_prefix, index_name)
+      index = RedisIndex::Index.new(arg.merge :model => self)
+      index.name = "foreign_index_#{index.name}"
       
-      model.index_attribute(attr, attr_type, model.redis_prefix, index_name)
-      
+      foreign_index = RedisIndex::ForeignIndex.new(arg.merge :real_index => index)
+      arg[:model].redis_indices[foreign_index.name]=foreign_index
+      self.redis_indices[index.name]=index
     end
-    def redis_indices
-      @redis_indices
+    
+    def index_foreign_attribute(arg) #doesn't work yet.
+      raise Exception, "Not implemented"
+      arg[:model].class_eval do
+        include RedisIndex unless include? RedisIndex
+        index_attribute_for
+      end unless arg[:model].nil?
     end
-    def redis_prefix
-      @redis_prefix
+    
+    def indexing_attribute_from(*arg) #dummy method
     end
+    
     def index_attributes(*arg)
       arg.each do |attr|
           index_attribute :attribute => attr
@@ -195,33 +241,19 @@ module RedisIndex
       res = self.find(:all).each do |row|
           row.create_redis_indices
       end
+      redis_indices.each do |k, index|
+        if index.kind_of? RedisIndex::ForeignIndex
+          index.real_index.model.build_redis_indices 
+        end
+      end
       self
     end
   end
   
-  def create_redis_indices
-    self.class.redis_indices.each do |index_name, index|
-      index.add index.value_is(self), id
-    end
-  end
-  #after_create :create_redis_indices
-  
-  def update_redis_indices
-    self.class.redis_indices.each do |index_name, index|
-      attr_is, attr_was = index.value_is(self), index.value_was(self)
-      if attr_is != attr_was
-          index.add attr_is, id 
-          index.remove attr_was, id
+  [:create, :update, :delete].each do |op|
+    define_method "#{op}_redis_indices" do
+      self.class.redis_indices.each do |index_name, index|
       end
     end
   end
-  #before_save :update_redis_indices
-  
-  def delete_redis_indices
-    self.class.redis_indices.each do |index_name, index|
-      index.remove index.value_is(self), id
-    end
-  end
-  #before_destroy :delete_redis_indices
-  
 end
