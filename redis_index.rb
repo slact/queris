@@ -4,46 +4,33 @@ require 'digest/sha1'
 module RedisIndex
   
   class Index
-    attr_accessor :name, :redis, :model
+    attr_accessor :name, :redis, :model, :attribute
     def initialize(arg={})
       arg.each do |opt, val|
         instance_variable_set "@#{opt}".to_sym, val
       end
       @redis ||= $redis
-      @name = @name.to_sym unless !@name
-    end
-    def digest(val)
-      Digest::SHA1.hexdigest val.to_s
-    end
-  end
-    
-  class SearchIndex < Index
-    attr_accessor :type, :attribute
-    def initialize(arg={})
-      super arg
-      @type ||= "string"
-      @name ||= @attribute.to_sym
+      @name ||= @attribute
       @attribute ||= @name
       @attribute = @attribute.to_sym unless !@attribute
-      @key ||= :id #object's key attribute (default is 'id')
-      @set_keyf ||= "#{@prefix || @redis_prefix || @model.redis_prefix}#{self.class.name.sub /^.*::/, ""}:#{@name}=%s"
-      raise Exception, "Model not passed to index." unless @model
+      @name = @name.to_sym
+      if block_given?
+        yield self, arg 
+      end
+      raise Exception, "Index must have a name" unless @name
+      @model.redis_indices[@name] = self
     end
-    
+    def val(val)
+      @value.nil? ? val : @value.call(val)
+    end
+    def digest(value)
+      Digest::SHA1.hexdigest val(value).to_s
+    end
     def value_is(obj)
-      obj.send @attribute
+      val obj.send @attribute
     end
     def value_was(obj)
-      obj.send "#{@attribute}_was"
-    end
-    def set_key(val, prefix=nil)
-      @set_keyf % digest(val)
-    end
-    def add(val, obj)
-      @redis.sadd set_key(val), obj.send(@key)
-    end
-    def remove(val, obj)
-      @redis.sremove set_key(val), obj.send(@key)
+      val obj.send "#{@attribute}_was"
     end
     def update(obj)
       val_is, val_was = value_is(obj), value_was(obj)
@@ -58,6 +45,28 @@ module RedisIndex
     def delete(obj)
       remove(value_was(obj), obj)
     end
+    
+  end
+    
+  class SearchIndex < Index
+    def initialize(arg={})
+      super arg
+      @type ||= "string"
+      @key ||= :id #object's key attribute (default is 'id')
+      @set_keyf ||= "%s#{self.class.name.sub /^.*::/, ""}:#{@name}=%s"
+      raise Exception, "Model not passed to index." unless @model
+    end
+    
+    def set_key(val, prefix=nil)
+      val = @value.call val if @value
+      @set_keyf %[prefix || @redis_prefix || @model.redis_prefix, digest(val)]
+    end
+    def add(val, obj)
+      @redis.sadd set_key(val), obj.send(@key)
+    end
+    def remove(val, obj)
+      @redis.sremove set_key(val), obj.send(@key)
+    end
   end
   
   class ForeignIndex < SearchIndex
@@ -67,7 +76,7 @@ module RedisIndex
       super arg
     end
     def create(*a) end
-    alias :remove :create
+    alias :delete :create
     alias :update :create
     def set_key(*arg)
       @real_index.set_key *arg
@@ -87,7 +96,22 @@ module RedisIndex
   end
   
   class SortIndex < Index
-    
+    attr_accessor :sort_by
+    def initialize(arg)
+      super arg
+      @hash_keyf = "#{model.name.sub /^.*::/, ""}:%s"
+    end
+    def hash_key(val)
+      @hash_keyf % digest(val)
+    end
+    def add(val, obj)
+      @redis.hset hash_key(val), @name, value_is(obj)
+    end
+    def remove(val)
+      hkey = hash_key val
+      @redis.hdel hkey, @name
+      @redis.del hkey unless @redis.hlen(hkey) > 0
+    end
   end
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
@@ -100,11 +124,6 @@ module RedisIndex
       self
     end
     
-    require 'digest/sha1'
-    def digest(val)
-      Digest::SHA1.hexdigest val.to_s
-    end
-    
     def union(index, val)
       build_query :sunionstore, index, val
     end
@@ -114,7 +133,7 @@ module RedisIndex
     end
     
     def query(force=nil)
-      temp_set = "#{@redis_prefix}temp_set:#{digest results_key}"
+      temp_set = "#{@redis_prefix}temp_set:(#{results_key})"
       if force || !@redis.exists(results_key)
         @redis.del temp_set if force
         first = @queue.first
@@ -144,7 +163,7 @@ module RedisIndex
     end
     
     def sort(opts)
-      @sort_options = opts
+      
       self
     end
 
@@ -216,28 +235,31 @@ module RedisIndex
   end
 
   module ClassMethods
-    def index_attribute(arg={})
-      arg[:model] ||= self unless arg.kind_of? Index
-      new_index = (arg.kind_of? Index) ? arg : SearchIndex.new(arg)
-      redis_indices[new_index.name.to_sym] = new_index
+    def index_attribute(arg={}, &block)
+      index_class = arg[:index] || SearchIndex
+      
+      raise ArgumentError "index argument must be in RedisIndex::Index if given" unless index_class <= Index
+      index_class.new(arg.merge(:model => self), &block)
     end
     
     def index_attribute_for(arg)
       raise ArgumentError, "index_attribute_for requires :model argument" unless arg[:model]
-      index = SearchIndex.new(arg.merge(:model => self))
-      index.name = "foreign_index_#{index.name}"
-      
-      foreign_index = ForeignIndex.new(arg.merge :real_index => index)
-      arg[:model].redis_indices[foreign_index.name]=foreign_index
-      self.redis_indices[index.name]=index
+      index = index_attribute(arg) do |index|
+        index.name = "foreign_index_#{index.name}"
+      end
+      arg[:model].send :index_attribute, arg.merge(:index=> ForeignIndex, :real_index => index)
     end
     
     def index_foreign_attribute(arg) #doesn't work yet.
       raise Exception, "Not implemented"
       arg[:model].class_eval do
         include RedisIndex unless include? RedisIndex
-        index_attribute_for
       end unless arg[:model].nil?
+      index_attribute_for
+    end
+    
+    def index_sort_attribute(arg)
+      index_attribute arg.merge :index => SortIndex
     end
     
     def indexing_attribute_from(*arg) #dummy method
@@ -245,7 +267,7 @@ module RedisIndex
     
     def index_attributes(*arg)
       arg.each do |attr|
-          index_attribute :attribute => attr
+        index_attribute :attribute => attr
       end
       self
     end
@@ -261,7 +283,9 @@ module RedisIndex
       
       #update all foreign indices
       redis_indices.each do |k, index|
-        index.real_index.model.send :build_redis_indices if index.kind_of? ForeignIndex
+        if index.kind_of? ForeignIndex
+          index.real_index.model.send :build_redis_indices 
+        end
       end
       self
     end
