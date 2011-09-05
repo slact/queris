@@ -146,13 +146,13 @@ module RedisIndex
       
       @results_key = nil
       if @queue.length == 0 || @queue.last[:operation]!=op
-         @queue.push :operation => op, :index => [], :value => [], :key =>[], :results_key => []
+         @queue.push :operation => op, :key =>[], :results_key => []
       end
       last = @queue.last
-      last[:index].push index
-      last[:value].push value
-      last[:key].push index.set_key value
-      last[:results_key].push index.set_key value, ""
+      (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
+        last[:key].push index.set_key a_value
+        last[:results_key].push index.set_key a_value, ""
+      end
       self
     end
     
