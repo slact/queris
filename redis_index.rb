@@ -61,12 +61,23 @@ module RedisIndex
       raise ArgumentError, "Missing required initialization attribute real_index for ForeignIndex." unless arg[:real_index]
       super arg
     end
-    def add(*arg) end
-    def remove(*arg) end
-    def value_is(*arg) end
-    def value_was(*arg) end
+    def create(*a) puts self end
+    alias :remove :create
+    alias :update :create
     def set_key(*arg)
       @real_index.set_key *arg
+    end
+  end
+  
+  class CustomIndex < Index
+    def initialize(arg)
+      raise ArgumentError, "Missing required initialization attribute real_index for ForeignIndex." unless arg[:real_index]
+      super arg
+    end
+    [:add, :remove, :update].each do |method_name|
+      define_method method_name, do |*arg|
+        send "#{method_name}_block", *arg
+      end
     end
   end
   
@@ -204,8 +215,8 @@ module RedisIndex
     
     def index_attribute_for(arg)
       raise ArgumentError, "index_attribute_for requires :model argument" unless arg[:model]
-      
-      index = RedisIndex::Index.new(arg.merge :model => self)
+      index = RedisIndex::Index.new(arg.merge(:model => self))
+      puts index.model, "YES"
       index.name = "foreign_index_#{index.name}"
       
       foreign_index = RedisIndex::ForeignIndex.new(arg.merge :real_index => index)
@@ -237,14 +248,12 @@ module RedisIndex
       query
     end
     
-    def build_redis_indices
-      res = self.find(:all).each do |row|
-          row.create_redis_indices
-      end
+    def build_redis_indices   
+      self.find(:all).each { |row| row.create_redis_indices }
+      
+      #update all foreign indices
       redis_indices.each do |k, index|
-        if index.kind_of? RedisIndex::ForeignIndex
-          index.real_index.model.build_redis_indices 
-        end
+        index.real_index.model.send :build_redis_indices if index.kind_of? RedisIndex::ForeignIndex
       end
       self
     end
@@ -252,8 +261,8 @@ module RedisIndex
   
   [:create, :update, :delete].each do |op|
     define_method "#{op}_redis_indices" do
-      self.class.redis_indices.each do |index_name, index|
-      end
+      puts op
+      self.class.redis_indices.each { |i, index| index.send op, self}
     end
   end
 end
