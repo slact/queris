@@ -26,8 +26,7 @@ module RedisIndex
       @value.nil? ? value : @value.call(value)
     end
     def digest(value)
-      value
-      #Digest::SHA1.hexdigest value.to_s
+      Digest::SHA1.hexdigest value.to_s
     end
     def value_is(obj)
       obj.send @attribute
@@ -143,6 +142,20 @@ module RedisIndex
       build_query :sinterstore, index, val
     end
     
+    def build_query(op, index, value)
+      
+      @results_key = nil
+      if @queue.length == 0 || @queue.last[:operation]!=op
+         @queue.push :operation => op, :index => [], :value => [], :key =>[], :results_key => []
+      end
+      last = @queue.last
+      last[:index].push index
+      last[:value].push value
+      last[:key].push index.set_key value
+      last[:results_key].push index.set_key value, ""
+      self
+    end
+    
     def query(force=nil)
       temp_set = "#{@redis_prefix}temp_set:(#{results_key})"
       @sort_options[:store] ||= results_key
@@ -177,20 +190,6 @@ module RedisIndex
       index = @model.redis_index(index_name, SortIndex)
       @sort_options[:by] = index.sort_by
       @sort_options[:order] = direction.to_s
-      self
-    end
-
-    def build_query(op, index, value)
-      
-      @results_key = nil
-      if @queue.length == 0 || @queue.last[:operation]!=op
-         @queue.push :operation => op, :index => [], :value => [], :key =>[], :results_key => []
-      end
-      last = @queue.last
-      last[:index].push index
-      last[:value].push value
-      last[:key].push index.set_key value
-      last[:results_key].push index.set_key value, ""
       self
     end
     
