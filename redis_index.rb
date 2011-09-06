@@ -164,7 +164,7 @@ module RedisIndex
       
       @results_key = nil
       if @queue.length == 0 || @queue.last[:operation]!=op
-         @queue.push :operation => op, :key =>[], :results_key => []
+         @queue.push :operation => op, :key =>[], :results_key => [], :query_param => []
       end
       last = @queue.last
       (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
@@ -189,7 +189,7 @@ module RedisIndex
         end
         @redis.expire temp_set, 10 #10-second search set timeout
         @redis.sort temp_set, @sort_options
-        @redis.expire @cache_key, 5*60    
+        @redis.expire @cache_key, 3*60
       else
         @redis.sort results_key, @sort_options
       end
@@ -212,8 +212,13 @@ module RedisIndex
     end
     
     def results_key
-      @results_key ||= @redis_prefix + "results:" + ( @queue.map { |q| "#{q[:operation]}:" + q[:results_key].sort.join("&")}.join("&"))
+      @results_key ||= @redis_prefix + "results:" + digest( @queue.map { |q| "#{q[:operation]}:" + q[:results_key].sort.join("&")}.join("&"))
       @results_key
+    end
+    
+    def digest(value)
+      #value
+      Digest::SHA1.hexdigest value.to_s
     end
     
     def length
