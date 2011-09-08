@@ -278,7 +278,7 @@ module RedisIndex
     
     def results(*arg)
       super *arg do |id| 
-        @model.find id
+        @model.find_cached id
       end
     end
     
@@ -322,8 +322,8 @@ module RedisIndex
     end
     base.extend ClassMethods
     base.after_create :create_redis_indices
-    base.before_save :update_redis_indices
-    base.before_destroy :delete_redis_indices
+    base.before_save :update_redis_indices, :uncache
+    base.before_destroy :delete_redis_indices, :uncache
     base.after_initialize do 
       
     end
@@ -379,11 +379,29 @@ module RedisIndex
       end
       self
     end
+      
+    def cache_key(id)
+      "#{redis_prefix}#{id}:cached"
+    end
+    
+    def find_cached(id)
+      key = cache_key id
+      if marshaled = $redis.get(key)
+        Marshal.load marshaled
+      elsif (found = find id)
+        $redis.set key, Marshal.dump(found)
+        found
+      end
+    end
   end
   
   [:create, :update, :delete].each do |op|
     define_method "#{op}_redis_indices" do
       self.class.redis_index.each { |index| index.send op, self}
     end
+  end
+  
+  def uncache
+    $redis.del self.class.cache_key(id)
   end
 end
