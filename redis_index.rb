@@ -19,7 +19,8 @@ module RedisIndex
       if block_given?
         yield self, arg 
       end
-      raise Exception, "Index must have a name" unless @name
+      raise ArgumentError, "Index must have a name" unless @name
+      raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
     end
     def val(value)
@@ -67,6 +68,12 @@ module RedisIndex
     def remove(obj, val = nil)
       @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
     end
+    
+    def query(command, query, value, obj=nil)
+      (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
+        query.push_command :command => command, :key => set_key(a_value), :short_key => set_key(a_value, "")
+      end
+    end
   end
   
   class ForeignIndex < SearchIndex
@@ -112,108 +119,121 @@ module RedisIndex
     end
   end
   
-  class SortIndex < Index
+  class RangeIndex < SearchIndex
     def initialize(arg)
+      @score ||= Proc.new { |x| x.to_f }
       super arg
     end
     
-    def hash_key(val, prefix=nil)
-      @keyf % [prefix || @redis_prefix || @model.redis_prefix, val]
+    def sorted_set_key(val=nil, prefix=nil)
+      @keyf %[prefix || @model.redis_prefix, "(...)"]
     end
     
     def add(obj, value=nil)
-      @redis.hset hash_key(obj.send @key), @name, val(value || value_is(obj))
+      my_val = val(value || value_is(obj))
+      @redis.zadd sorted_set_key(obj.send @attribute), score(obj, my_val), obj.send(@key)
     end
-    alias create add
+    
+    def score(obj, val=nil)
+      value = val || obj.send(:instance_variable_get, "@#{@attribute}")
+      @score.call value
+    end
     
     def remove(obj, value=nil)
-      hkey = hash_key(obj.send @key)
-      @redis.hdel hkey, @name
-      @redis.del hkey unless @redis.hlen(hkey) > 0
-    end
-    alias delete remove
-    
-    def update(obj)
-      add(obj) if value_is(obj) != value_was(obj)
+      @redis.zrem sorted_set_key(obj.send @attribute), val(value || value_is(obj))
     end
     
-    def sort_by
-      hash_key "*->#{@name}"
+    def query(command, query, val, multiplier=1)
+      param = {:command => command}
+      case val
+      when Range
+        range command, query, val.begin, val.end, false, val.exclude_end?, nil, multiplier
+      when Enumerable
+        raise ArgumentError, "RangeIndex doesn't accept non-Range Enumerables"
+      else
+        range command, query, '-inf', val || 'inf', false, true, nil, multiplier
+        range command, query, val, 'inf', true, false, true, multiplier if val
+      end
+      self
     end
+    
+    private
+    def range(command, query, min, max, exclude_min, exclude_max, range_only=nil, multiplier=1)
+      key = sorted_set_key
+      min, max = "#{exclude_min ? "(" : nil}#{min}", "#{exclude_max ? "(" : nil}#{max}"
+      query.push_command :command => command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier unless range_only
+      query.push_command :command => :zremrangebyscore, :arg => ['-inf', min]
+      query.push_command :command => :zremrangebyscore, :arg => [max, 'inf']
+      self
+    end
+    
   end
+  
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
   class Query
     def initialize(arg)
       @queue = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
-      @sort_options = {}
       @redis=arg[:redis] || $redis
       self
     end
     
     def union(index, val)
-      build_query :sunionstore, index, val
+      index.query :zunionstore, self, val
+      self
     end
     
     def intersect(index, val)
-      build_query :sinterstore, index, val
+      index.query :zinterstore, self, val
+      self
     end
     
-    def build_query(op, index, value)
-      
-      @results_key = nil
-      if @queue.length == 0 || @queue.last[:operation]!=op
-         @queue.push :operation => op, :key =>[], :results_key => [], :query_param => []
-      end
-      last = @queue.last
-      (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
-        last[:key].push index.set_key a_value
-        last[:results_key].push index.set_key a_value, ""
-      end
+    def sort(index, direction=:asc)
+      index.query :zinterstore, self, nil, (direction == :asc ? -1 : 1)
       self
     end
     
     def query(force=nil)
-      temp_set = "#{@redis_prefix}temp_set:(#{results_key})"
-      @sort_options[:store] ||= results_key
       if force || !@redis.exists(results_key)
+        temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
         @redis.del temp_set if force
         first = @queue.first
-        @queue.each do |q|
-          if first!=q
-            @redis.send q[:operation], temp_set, temp_set, *q[:key]
+        @queue.each do |cmd|
+          if [:zinterstore, :zunionstore].member? cmd[:command]
+            if first == cmd
+              @redis.send cmd[:command], temp_set, cmd[:key], :weights => cmd[:weight]
+            else
+              @redis.send cmd[:command], temp_set, cmd[:key] + [temp_set], :weights => (cmd[:weight] + [0])
+            end
           else
-            @redis.send q[:operation], temp_set, *q[:key]
+            @redis.send cmd[:command], temp_set, *cmd[:arg]
           end
         end
-        @redis.expire temp_set, 10 #10-second search set timeout
-        @redis.sort temp_set, @sort_options
-        @redis.expire @cache_key, 3*60
-      else
-        @redis.sort results_key, @sort_options
+        @redis.rename temp_set, results_key if @redis.exists temp_set
+        @redis.expire results_key, 3*60
       end
       self
     end
     
     def results(first=0, last=-1, &block)
-      res = @redis.lrange(results_key, first, last)
+      res = @redis.zrange(results_key, first, last)
       if block_given?
         res.map! &block
       end
       res
     end
     
-    def sort(index_name, direction=:asc)
-      index = @model.redis_index(index_name, SortIndex)
-      @sort_options[:by] = index.sort_by
-      @sort_options[:order] = direction.to_s
-      self
-    end
-    
     def results_key
-      @results_key ||= @redis_prefix + "results:" + digest( @queue.map { |q| "#{q[:operation]}:" + q[:results_key].sort.join("&")}.join("&"))
-      @results_key
+      @results_key ||= @redis_prefix + "results:" + digest( @queue.map { |q| 
+        key = "#{q[:command]}:"
+        if !(q[:short_key].empty? && q[:key].empty?)
+          key << (q[:short_key].empty? ? q[:key] : q[:short_key]).sort.join("&")
+        else
+          key << digest(q[:arg].to_json)
+        end
+        key
+      }.join("&"))
     end
     
     def digest(value)
@@ -222,10 +242,25 @@ module RedisIndex
     end
     
     def length
-      @redis.llen results_key
+      @redis.zcard results_key
     end
     alias :size :length
     alias :count :length
+    
+    def push_command(arg={})
+      cmd = arg[:command]  
+      if (@queue.length == 0 || @queue.last[:command]!=cmd) || !([:zinterstore, :zunionstore].member? cmd)
+        @queue.push :command => cmd, :key =>[], :weight => [], :short_key => []
+      end
+      last = @queue.last
+      unless arg[:key].nil?
+        last[:key] << arg[:key]
+        last[:weight] << arg[:weight] || 0
+      end
+      last[:short_key] << arg[:short_key] unless arg[:short_key].nil?
+      last[:arg] = arg[:arg]
+      self
+    end
     
   end
   
@@ -240,9 +275,15 @@ module RedisIndex
         @model.find id
       end
     end
-    def build_query(op, index_name, value)
-      index = @model.redis_index index_name
-      super op, index, value
+    
+    def union(index_name, val=nil)
+      super @model.redis_index(index_name, SearchIndex), val
+    end
+    def intersect(index_name, val=nil)
+      super @model.redis_index(index_name, SearchIndex), val
+    end
+    def sort(index_name, direction=:asc)
+      super @model.redis_index(index_name, SearchIndex), direction
     end
   end
   
@@ -283,7 +324,6 @@ module RedisIndex
   module ClassMethods
     def index_attribute(arg={}, &block)
       index_class = arg[:index] || SearchIndex
-      
       raise ArgumentError, "index argument must be in RedisIndex::Index if given" unless index_class <= Index
       index_class.new(arg.merge(:model => self), &block)
     end
@@ -298,16 +338,14 @@ module RedisIndex
     
     def index_attribute_from(arg) #doesn't work yet.
       model = arg[:model]
-      model.send( :include, RedisIndex) unless model.include? RedisIndex
+      model.send(:include, RedisIndex) unless model.include? RedisIndex
       model.send(:index_attribute_for, arg.merge(:model => self))
     end
     
     def index_sort_attribute(arg)
-      index_attribute arg.merge :index => SortIndex
+      index_attribute arg.merge :index => RangeIndex, :use_existing_index => true
     end
     
-    def indexing_attribute_from(*arg) #dummy method
-    end
     
     def index_attributes(*arg)
       arg.each do |attr|
