@@ -69,7 +69,7 @@ module RedisIndex
       @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
     end
     
-    def query(command, query, value, obj=nil)
+    def build_query_part(command, query, value, obj=nil)
       (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
         query.push_command :command => command, :key => set_key(a_value), :short_key => set_key(a_value, "")
       end
@@ -143,7 +143,7 @@ module RedisIndex
       @redis.zrem sorted_set_key(obj.send @attribute), val(value || value_is(obj))
     end
     
-    def query(command, query, val, multiplier=1)
+    def build_query_part(command, query, val, multiplier=1)
       param = {:command => command}
       case val
       when Range
@@ -180,17 +180,17 @@ module RedisIndex
     end
     
     def union(index, val)
-      index.query :zunionstore, self, val
+      index.build_query_part :zunionstore, self, val
       self
     end
     
     def intersect(index, val)
-      index.query :zinterstore, self, val
+      index.build_query_part :zinterstore, self, val
       self
     end
     
     def sort(index, direction=:asc)
-      index.query :zinterstore, self, nil, (direction == :asc ? -1 : 1)
+      index.build_query_part :zinterstore, self, nil, (direction == :asc ? -1 : 1)
       self
     end
     
@@ -200,14 +200,16 @@ module RedisIndex
         @redis.del temp_set if force
         first = @queue.first
         @queue.each do |cmd|
-          if [:zinterstore, :zunionstore].member? cmd[:command]
-            if first == cmd
-              @redis.send cmd[:command], temp_set, cmd[:key], :weights => cmd[:weight]
+          @redis.multi do
+            if [:zinterstore, :zunionstore].member? cmd[:command]
+              if first == cmd
+                @redis.send cmd[:command], temp_set, cmd[:key], :weights => cmd[:weight]
+              else
+                @redis.send cmd[:command], temp_set, cmd[:key] + [temp_set], :weights => (cmd[:weight] + [0])
+              end
             else
-              @redis.send cmd[:command], temp_set, cmd[:key] + [temp_set], :weights => (cmd[:weight] + [0])
+              @redis.send cmd[:command], temp_set, *cmd[:arg]
             end
-          else
-            @redis.send cmd[:command], temp_set, *cmd[:arg]
           end
         end
         @redis.rename temp_set, results_key if @redis.exists temp_set
@@ -262,6 +264,10 @@ module RedisIndex
       self
     end
     
+    def build_query_part(command, query, *arg)
+      self.query
+      query.push_command :command => command, :key => results_key
+    end
   end
   
   class ActiveRecordQuery < RedisIndex::Query
@@ -292,13 +298,16 @@ module RedisIndex
       class << self
         def redis_index (index_name=nil, index_class = Index)
           raise ArgumentError, "#{index_class} must be a subclass of RedisIndex::Index" unless index_class <= Index
-          if index_name.kind_of? index_class
+          case index_name 
+          when index_class
             return index_name 
-          elsif index_name.nil?
+          when NilClass
             return @redis_indices 
+          when Query
+            return index_name
           end
           @redis_indices||=[] #this line sucks.
-          index = @redis_indices.find { |i| i.name == index_name.to_sym && i.kind_of?(index_class)}
+          index = @redis_indices.find { |i| index_name.respond_to?(:to_sym) && i.name == index_name.to_sym && i.kind_of?(index_class)}
           raise Exception, "Index #{index_name} not found in #{name}" unless index
           index
         end
