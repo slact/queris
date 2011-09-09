@@ -48,8 +48,7 @@ module RedisIndex
     end
     def delete(obj)
       remove(obj, value_was(obj))
-    end
-    
+    end    
   end
     
   class SearchIndex < Index
@@ -172,10 +171,12 @@ module RedisIndex
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
   class Query
+    attr_accessor :model, :redis_prefix
     def initialize(arg)
       @queue = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
       @redis=arg[:redis] || $redis
+      @subquery = []
       self
     end
     
@@ -195,6 +196,7 @@ module RedisIndex
     end
     
     def query(force=nil)
+      @subquery.each { |q| q.query }
       if force || !@redis.exists(results_key)
         temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
         @redis.del temp_set if force
@@ -213,12 +215,18 @@ module RedisIndex
           end
         end
         @redis.rename temp_set, results_key if @redis.exists temp_set
-        @redis.expire results_key, 3*60
+        @redis.expire results_key, 3.minutes
       end
       self
     end
     
-    def results(first=0, last=-1, &block)
+    def results(*arg, &block)
+      query
+      if arg.first && arg.first.kind_of?(Range)
+        first, last = arg.first.begin, arg.first.end - (arg.first.exclude_end? ? 1 : 0)
+      else
+        first, last = arg.first.to_i, (arg.second || -1).to_i
+      end
       res = @redis.zrange(results_key, first, last)
       if block_given?
         res.map! &block
@@ -244,6 +252,7 @@ module RedisIndex
     end
     
     def length
+      query
       @redis.zcard results_key
     end
     alias :size :length
@@ -265,8 +274,22 @@ module RedisIndex
     end
     
     def build_query_part(command, query, *arg)
-      self.query
       query.push_command :command => command, :key => results_key
+    end
+    
+    def subquery(*arg)
+      @subquery << self.class.new(*arg)
+      @subquery.last
+    end
+    
+    def marshal_dump
+      instance_values.merge "redis" => false
+    end
+    def marshal_load(arg)
+      arg.each do |n,v|
+        instance_variable_set "@#{n}", v
+      end
+      @redis ||= $redis
     end
   end
   
@@ -283,9 +306,11 @@ module RedisIndex
     end
     
     def union(index_name, val=nil)
+      #print "UNION ", index_name, " : ", val.inspect, "\r\n"
       super @model.redis_index(index_name, SearchIndex), val
     end
     def intersect(index_name, val=nil)
+      #print "INTERSECT ", index_name, " : ", val.inspect, "\r\n"
       super @model.redis_index(index_name, SearchIndex), val
     end
     def sort(index_name, direction=:asc)
