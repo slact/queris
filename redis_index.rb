@@ -171,7 +171,7 @@ module RedisIndex
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
   class Query
-    attr_accessor :model, :redis_prefix
+    attr_accessor :redis_prefix
     def initialize(arg)
       @queue = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
@@ -277,8 +277,8 @@ module RedisIndex
       query.push_command :command => command, :key => results_key
     end
     
-    def subquery(*arg)
-      @subquery << self.class.new(*arg)
+    def subquery
+      @subquery << self.class.new(self.model)
       @subquery.last
     end
     
@@ -294,8 +294,10 @@ module RedisIndex
   end
   
   class ActiveRecordQuery < RedisIndex::Query
-    def initialize(arg)
-      @model = arg[:model]
+    attr_accessor :model
+    def initialize(arg=nil)
+      @model = arg.kind_of?(Hash) ? arg[:model] : arg
+      raise ArgumentError, ":model arg must be an ActiveRecord model, got #{arg.inspect} instead." unless @model.kind_of?(Class) && @model < ActiveRecord::Base
       super :prefix => @model.redis_prefix
     end
     
