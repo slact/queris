@@ -395,15 +395,29 @@ module RedisIndex
       yield query if block_given?
       query
     end
-    
+
     def build_redis_indices   
-      self.find(:all).each { |row| row.create_redis_indices }
+      puts ""
+      all = self.find(:all)
+      start_time, printy, total =Time.now.to_f, 0, all.count - 1
+
+      all.each_with_index do |row, i|
+        if printy == i
+          print "\rBuilding redis indices... #{((i.to_f/total) * 100).to_i}%"
+          printy += (total * 0.05).round
+        end
+        row.create_redis_indices 
+      end
+      print "\rBuilt redis indices for #{total} rows in #{(Time.now.to_f - start_time).round(6)} seconds.\r\n"
       #update all foreign indices
+      foreign = 0
       redis_index.each do |index|
         if index.kind_of? ForeignIndex
+          foreign+=1
           index.real_index.model.send :build_redis_indices 
         end
       end
+      puts "Built #{redis_index.count} ind#{redis_index.index.count == 1 ? "ex" : "ices"} (#{foreign} foreign) for #{self.name} in #{(Time.now.to_f - start_time).round(6)} seconds."
       self
     end
       
