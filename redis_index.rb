@@ -87,7 +87,12 @@ module RedisIndex
     def set_key(*arg)
       @real_index.set_key *arg
     end
+    def method_missing(method)
+      @real_index.method
+    end
   end
+  
+  
   
   class PresenceIndex < SearchIndex
     def initialize(arg)
