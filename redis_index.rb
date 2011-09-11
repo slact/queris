@@ -70,7 +70,7 @@ module RedisIndex
     
     def build_query_part(command, query, value, obj=nil)
       (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
-        query.push_command :command => command, :key => set_key(a_value), :short_key => set_key(a_value, "")
+        query.push_command command, :key => set_key(a_value), :short_key => set_key(a_value, "")
       end
     end
   end
@@ -207,6 +207,7 @@ module RedisIndex
         first = @queue.first
         @redis.multi do
           @queue.each do |cmd|
+            Rails.logger.info cmd.inspect
             if [:zinterstore, :zunionstore].member? cmd[:command]
               if first == cmd
                 @redis.send cmd[:command], temp_set, cmd[:key], :weights => cmd[:weight]
@@ -263,7 +264,9 @@ module RedisIndex
     alias :count :length
     
     def push_command(cmd, arg={})
-      cmd ||= arg[:command]  
+      cmd ||= arg[:command]
+      raise "command must be symbol-like" unless cmd.respond_to? :to_sym
+      cmd = cmd.to_sym
       if (@queue.length == 0 || @queue.last[:command]!=cmd) || !([:zinterstore, :zunionstore].member? cmd)
         @queue.push :command => cmd, :key =>[], :weight => [], :short_key => []
       end
