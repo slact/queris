@@ -17,7 +17,7 @@ module RedisIndex
       @key ||= :id #object's key attribute (default is 'id')
       @keyf ||= "%s#{self.class.name.sub /^.*::/, ""}:#{@name}=%s"
       if block_given?
-        yield self, arg 
+        yield self, arg
       end
       raise ArgumentError, "Index must have a name" unless @name
       raise ArgumentError, "Index must have a model" unless @model
@@ -165,9 +165,9 @@ module RedisIndex
     def range(command, query, min, max, exclude_min, exclude_max, range_only=nil, multiplier=1)
       key = sorted_set_key
       min, max = "#{exclude_min ? "(" : nil}#{min}", "#{exclude_max ? "(" : nil}#{max}"
-      query.push_command :command => command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier unless range_only
-      query.push_command :command => :zremrangebyscore, :arg => ['-inf', min]
-      query.push_command :command => :zremrangebyscore, :arg => [max, 'inf']
+      query.push_command command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier unless range_only
+      query.push_command :zremrangebyscore, :arg => ['-inf', min]
+      query.push_command :zremrangebyscore, :arg => [max, 'inf']
       self
     end
     
@@ -263,8 +263,8 @@ module RedisIndex
     alias :size :length
     alias :count :length
     
-    def push_command(arg={})
-      cmd = arg[:command]  
+    def push_command(cmd, arg={})
+      cmd ||= arg[:command]  
       if (@queue.length == 0 || @queue.last[:command]!=cmd) || !([:zinterstore, :zunionstore].member? cmd)
         @queue.push :command => cmd, :key =>[], :weight => [], :short_key => []
       end
@@ -279,7 +279,7 @@ module RedisIndex
     end
     
     def build_query_part(command, query, *arg)
-      query.push_command :command => command, :key => results_key
+      query.push_command command, :key => results_key
     end
     
     def subquery
@@ -383,7 +383,7 @@ module RedisIndex
       raise ArgumentError, "index argument must be in RedisIndex::Index if given" unless index_class <= Index
       index_class.new(arg.merge(:model => self), &block)
     end
-    
+
     def index_attribute_for(arg)
       raise ArgumentError ,"index_attribute_for requires :model argument" unless arg[:model]
       index = index_attribute(arg) do |index|
@@ -391,25 +391,25 @@ module RedisIndex
       end
       arg[:model].send :index_attribute, arg.merge(:index=> ForeignIndex, :real_index => index)
     end
-    
+
     def index_attribute_from(arg) #doesn't work yet.
       model = arg[:model]
       model.send(:include, RedisIndex) unless model.include? RedisIndex
       model.send(:index_attribute_for, arg.merge(:model => self))
     end
-    
-    def index_sort_attribute(arg)
+
+    def index_range_attribute(arg)
       index_attribute arg.merge :index => RangeIndex, :use_existing_index => true
     end
-    
-    
+    alias index_sort_attribute index_range_attribute
+
     def index_attributes(*arg)
       arg.each do |attr|
         index_attribute :attribute => attr
       end
       self
     end
-      
+
     def redis_query
       query = ActiveRecordQuery.new :model => self
       yield query if block_given?
@@ -417,18 +417,18 @@ module RedisIndex
     end
 
     def build_redis_indices
-      puts ""
+      start_time = Time.now
       all = self.find(:all)
-      start_time, printy, total =Time.now.to_f, 0, all.count - 1
-
+      sql_time = Time.now - start_time
+      redis_start_time, printy, total =Time.now, 0, all.count - 1
       all.each_with_index do |row, i|
         if printy == i
-          print "\rBuilding redis indices... #{((i.to_f/total) * 100).to_i}%"
+          print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%"
           printy += (total * 0.05).round
         end
         row.create_redis_indices 
       end
-      print "\rBuilt redis indices for #{total} rows in #{(Time.now.to_f - start_time).round(6)} seconds.\r\n"
+      print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{sql_time.round 3} sec. for SQL).\r\n"
       #update all foreign indices
       foreign = 0
       redis_index.each do |index|
@@ -437,7 +437,7 @@ module RedisIndex
           index.real_index.model.send :build_redis_indices 
         end
       end
-      puts "Built #{redis_index.count} ind#{redis_index.index.count == 1 ? "ex" : "ices"} (#{foreign} foreign) for #{self.name} in #{(Time.now.to_f - start_time).round(6)} seconds."
+      puts "Built #{redis_index.count} ind#{redis_index.index.count == 1 ? "ex" : "ices"} (#{foreign} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
       self
     end
       
