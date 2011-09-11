@@ -294,29 +294,44 @@ module RedisIndex
   end
   
   class ActiveRecordQuery < RedisIndex::Query
-    attr_accessor :model
+    attr_accessor :model, :params
     def initialize(arg=nil)
+      @params = {}
       @model = arg.kind_of?(Hash) ? arg[:model] : arg
       raise ArgumentError, ":model arg must be an ActiveRecord model, got #{arg.inspect} instead." unless @model.kind_of?(Class) && @model < ActiveRecord::Base
       super :prefix => @model.redis_prefix
     end
-    
+
     def results(*arg)
-      super *arg do |id| 
+      super *arg do |id|
         @model.find_cached id
       end
     end
-    
+
+    #retrieve query parameters, as fed through union and intersect
+    def param(param_name)
+      @params[param_name.to_sym]
+    end
+    def sorting_by
+      @sort_by
+    end
+
     def union(index_name, val=nil)
       #print "UNION ", index_name, " : ", val.inspect, "\r\n"
       super @model.redis_index(index_name, SearchIndex), val
+      @params[index_name.to_sym]=val if index_name.respond_to? :to_sym
+      self
     end
     def intersect(index_name, val=nil)
       #print "INTERSECT ", index_name, " : ", val.inspect, "\r\n"
       super @model.redis_index(index_name, SearchIndex), val
+      @params[index_name.to_sym]=val if index_name.respond_to? :to_sym
+      self
     end
     def sort(index_name, direction=:asc)
       super @model.redis_index(index_name, SearchIndex), direction
+      @sort_by = index_name
+      self
     end
   end
   
@@ -396,7 +411,7 @@ module RedisIndex
       query
     end
 
-    def build_redis_indices   
+    def build_redis_indices
       puts ""
       all = self.find(:all)
       start_time, printy, total =Time.now.to_f, 0, all.count - 1
