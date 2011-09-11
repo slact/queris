@@ -27,8 +27,8 @@ module RedisIndex
       @value.nil? ? value : @value.call(value)
     end
     def digest(value)
-      value
-      #Digest::SHA1.hexdigest value.to_s
+      #value
+      Digest::SHA1.hexdigest value.to_s
     end
     def value_is(obj)
       obj.send @attribute
@@ -125,26 +125,23 @@ module RedisIndex
   
   class RangeIndex < SearchIndex
     def initialize(arg)
-      @score ||= Proc.new { |x| x.to_f }
+      @value ||= proc { |x| x.to_f }
       super arg
     end
-    
+    def val(val=nil)
+      @value.call val
+    end
     def sorted_set_key(val=nil, prefix=nil)
       @keyf %[prefix || @model.redis_prefix, "(...)"]
     end
     
     def add(obj, value=nil)
       my_val = val(value || value_is(obj))
-      @redis.zadd sorted_set_key(obj.send @attribute), score(obj, my_val), obj.send(@key)
-    end
-    
-    def score(obj, val=nil)
-      value = val || obj.send(:instance_variable_get, "@#{@attribute}")
-      @score.call value
+      @redis.zadd sorted_set_key(obj.send @attribute), val(my_val), obj.send(@key)
     end
     
     def remove(obj, value=nil)
-      @redis.zrem sorted_set_key(obj.send @attribute), val(value || value_is(obj))
+      @redis.zrem sorted_set_key(obj.send @attribute), obj.send(@key)
     end
     
     def build_query_part(command, query, value, multiplier=1)
@@ -401,12 +398,12 @@ module RedisIndex
     end
 
     def index_range_attribute(arg)
-      index_attribute arg.merge :index => RangeIndex, :use_existing_index => true
+      index_attribute arg.merge :index => RangeIndex
     end
     def index_range_attributes(*arg)
       base_param = arg.last.kind_of?(Hash) ? arg.pop : {}
       arg.each do |attr|
-        index_range_attribute base_param.merge(:attribute => attr)
+        index_range_attribute base_param.merge :attribute => attr
       end
     end
     alias index_sort_attribute index_range_attribute
@@ -414,7 +411,7 @@ module RedisIndex
     def index_attributes(*arg)
       base_param = arg.last.kind_of?(Hash) ? arg.pop : {}
       arg.each do |attr|
-        index_attribute base_param.merge(:attribute => attr)
+        index_attribute base_param.merge :attribute => attr
       end
       self
     end
