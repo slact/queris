@@ -27,8 +27,8 @@ module RedisIndex
       @value.nil? ? value : @value.call(value)
     end
     def digest(value)
-      #value
-      Digest::SHA1.hexdigest value.to_s
+      value
+      #Digest::SHA1.hexdigest value.to_s
     end
     def value_is(obj)
       obj.send @attribute
@@ -218,9 +218,9 @@ module RedisIndex
               @redis.send cmd[:command], temp_set, *cmd[:arg]
             end
           end
+          @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
+          @redis.expire results_key, 3.minutes
         end
-        @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
-        @redis.expire results_key, 3.minutes
       end
       self
     end
@@ -403,11 +403,18 @@ module RedisIndex
     def index_range_attribute(arg)
       index_attribute arg.merge :index => RangeIndex, :use_existing_index => true
     end
+    def index_range_attributes(*arg)
+      base_param = arg.last.kind_of?(Hash) ? arg.pop : {}
+      arg.each do |attr|
+        index_range_attribute base_param.merge(:attribute => attr)
+      end
+    end
     alias index_sort_attribute index_range_attribute
 
     def index_attributes(*arg)
+      base_param = arg.last.kind_of?(Hash) ? arg.pop : {}
       arg.each do |attr|
-        index_attribute :attribute => attr
+        index_attribute base_param.merge(:attribute => attr)
       end
       self
     end
