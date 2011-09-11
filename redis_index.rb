@@ -147,16 +147,15 @@ module RedisIndex
       @redis.zrem sorted_set_key(obj.send @attribute), val(value || value_is(obj))
     end
     
-    def build_query_part(command, query, val, multiplier=1)
-      param = {:command => command}
-      case val
+    def build_query_part(command, query, value, multiplier=1)
+      case value
       when Range
-        range command, query, val.begin, val.end, false, val.exclude_end?, nil, multiplier
+        range command, query, val(value.begin), val(value.end), false, value.exclude_end?, nil, multiplier
       when Enumerable
         raise ArgumentError, "RangeIndex doesn't accept non-Range Enumerables"
       else
-        range command, query, '-inf', val || 'inf', false, true, nil, multiplier
-        range command, query, val, 'inf', true, false, true, multiplier if val
+        range command, query, '-inf', val(value) || 'inf', false, true, nil, multiplier
+        range command, query, val(value), 'inf', true, false, true, multiplier if value
       end
       self
     end
@@ -164,7 +163,7 @@ module RedisIndex
     private
     def range(command, query, min, max, exclude_min, exclude_max, range_only=nil, multiplier=1)
       key = sorted_set_key
-      min, max = "#{exclude_min ? "(" : nil}#{min}", "#{exclude_max ? "(" : nil}#{max}"
+      min, max = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
       query.push_command command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier unless range_only
       query.push_command :zremrangebyscore, :arg => ['-inf', min]
       query.push_command :zremrangebyscore, :arg => [max, 'inf']
@@ -206,8 +205,8 @@ module RedisIndex
         temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
         @redis.del temp_set if force
         first = @queue.first
-        @queue.each do |cmd|
-          @redis.multi do
+        @redis.multi do
+          @queue.each do |cmd|
             if [:zinterstore, :zunionstore].member? cmd[:command]
               if first == cmd
                 @redis.send cmd[:command], temp_set, cmd[:key], :weights => cmd[:weight]
@@ -219,7 +218,7 @@ module RedisIndex
             end
           end
         end
-        @redis.rename temp_set, results_key if @redis.exists temp_set
+        @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
         @redis.expire results_key, 3.minutes
       end
       self
