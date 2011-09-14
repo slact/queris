@@ -61,11 +61,18 @@ module RedisIndex
     def set_key(value, prefix=nil)
       @keyf %[prefix || @redis_prefix || @model.redis_prefix, digest(val value)]
     end
-    def add(obj, val = nil)
-      @redis.sadd set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
+    def add(obj, value = nil)
+      i=0
+      value = val( value || obj.send(@attribute))
+      (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
+        i +=1
+        @redis.sadd set_key(val), obj.send(@key)
+      end
     end
-    def remove(obj, val = nil)
-      @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
+    def remove(obj, value = nil)
+      (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
+        @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
+      end
     end
 
     def build_query_part(command, query, value, multiplier=nil)
@@ -230,7 +237,6 @@ module RedisIndex
           [@queue, @sort_queue].each do |queue|
             first = queue.first
             queue.each do |cmd|
-              puts cmd.inspect
               send_command cmd, temp_set, (queue==@queue && first==cmd)
             end
           end
