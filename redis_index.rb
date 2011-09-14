@@ -69,9 +69,11 @@ module RedisIndex
     end
     
     def build_query_part(command, query, value, obj=nil)
+      ret = []
       (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
-        query.push_command command, :key => set_key(a_value), :short_key => set_key(a_value, "")
+        ret.push :command => command, :key => set_key(a_value), :short_key => set_key(a_value, "")
       end
+      ret
     end
   end
   
@@ -150,21 +152,26 @@ module RedisIndex
         range command, query, val(value.begin), val(value.end), false, value.exclude_end?, nil, multiplier
       when Enumerable
         raise ArgumentError, "RangeIndex doesn't accept non-Range Enumerables"
+      when NilClass
+        range command, query, nil, nil, false, false, false, multiplier
       else
-        range command, query, '-inf', val(value) || 'inf', false, true, nil, multiplier
-        range command, query, val(value), 'inf', true, false, true, multiplier if value
+        ret = range command, query, '-inf', value || 'inf', false, true, nil, multiplier
+        if value
+          ret += range command, query, val(value), 'inf', true, false, true, multiplier
+        end
+        ret
       end
-      self
     end
     
     private
-    def range(command, query, min, max, exclude_min, exclude_max, range_only=nil, multiplier=1)
-      key = sorted_set_key
-      min, max = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
-      query.push_command command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier unless range_only
-      query.push_command :zremrangebyscore, :arg => ['-inf', min]
-      query.push_command :zremrangebyscore, :arg => [max, 'inf']
-      self
+    def range(command, query, min=nil, max=nil, exclude_min=nil, exclude_max=nil, range_only=nil, multiplier=1)
+      key, ret = sorted_set_key, []
+      puts min.inspect, max.inspect, "YEEHAW"
+      min_param, max_param = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
+      ret << {:command => command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier} unless range_only
+      ret <<  {:command => :zremrangebyscore, :arg => ['-inf', min_param]} unless min.nil?
+      ret << {:command => :zremrangebyscore, :arg => [max_param, 'inf']} unless max.nil?
+      ret
     end
     
   end
@@ -174,7 +181,7 @@ module RedisIndex
   class Query
     attr_accessor :redis_prefix
     def initialize(arg)
-      @queue = []
+      @queue, @sort_queue = [], []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
       @redis=arg[:redis] || $redis
       @subquery = []
@@ -182,18 +189,28 @@ module RedisIndex
     end
     
     def union(index, val)
-      index.build_query_part :zunionstore, self, val
-      self
+      index.build_query_part(:zunionstore, self, val).each do |cmd|
+        push_command cmd
+      end
     end
     
     def intersect(index, val)
-      index.build_query_part :zinterstore, self, val
-      self
+      index.build_query_part(:zinterstore, self, val).each do |cmd|
+        push_command cmd
+      end
     end
     
-    def sort(index, direction=:asc)
-      index.build_query_part :zinterstore, self, nil, (direction == :asc ? -1 : 1)
+    def sort(index, reverse = nil)
+      @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
+      @sort_index_name = "#{reverse ? '-' : ''}#{index.name}"
+      @results_key = nil
       self
+    end
+    def sorting_by? what
+      @sort_index_name == what
+    end
+    def sorting_by
+      @sort_index_name
     end
     
     def query(force=nil)
@@ -201,18 +218,12 @@ module RedisIndex
       if force || !@redis.exists(results_key)
         temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
         @redis.del temp_set if force
-        first = @queue.first
         @redis.multi do
-          @queue.each do |cmd|
-            Rails.logger.info cmd.inspect
-            if [:zinterstore, :zunionstore].member? cmd[:command]
-              if first == cmd
-                @redis.send cmd[:command], temp_set, cmd[:key], :weights => cmd[:weight]
-              else
-                @redis.send cmd[:command], temp_set, cmd[:key] + [temp_set], :weights => (cmd[:weight] + [0])
-              end
-            else
-              @redis.send cmd[:command], temp_set, *cmd[:arg]
+          [@queue, @sort_queue].each do |queue|
+            first = queue.first
+            queue.each do |cmd|
+              puts cmd.inspect
+              send_command cmd, temp_set, (queue==@queue && first==cmd)
             end
           end
           @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
@@ -222,22 +233,40 @@ module RedisIndex
       self
     end
     
+    def send_command(cmd, temp_set_key, is_first=false)
+      if [:zinterstore, :zunionstore].member? cmd[:command]
+        if is_first
+          @redis.send cmd[:command], temp_set_key, cmd[:key], :weights => cmd[:weight]
+        else
+          @redis.send cmd[:command], temp_set_key, (cmd[:key].kind_of?(Array) ? cmd[:key] : [cmd[:key]]) + [temp_set_key], :weights => (cmd[:weight].kind_of?(Array) ? cmd[:weight] : [cmd[:weight]]) + [0]
+        end
+      else
+        @redis.send cmd[:command], temp_set_key, *cmd[:arg]
+      end
+    end
+    
     def results(*arg, &block)
       query
+      if arg.last == :reverse
+        reverse = true
+        arg.shift
+      end
       if arg.first && arg.first.kind_of?(Range)
         first, last = arg.first.begin, arg.first.end - (arg.first.exclude_end? ? 1 : 0)
       else
         first, last = arg.first.to_i, (arg.second || -1).to_i
       end
-      res = @redis.zrange(results_key, first, last)
+      res = reverse ? @redis.zrange(results_key, first, last) : @redis.zrevrange(results_key, first, last)
       if block_given?
         res.map! &block
       end
       res
     end
     
+    
+    
     def results_key
-      @results_key ||= @redis_prefix + "results:" + digest( @queue.map { |q| 
+      @results_key ||= "#{@redis_prefix}results:" + digest( @queue.map { |q| 
         key = "#{q[:command]}:"
         if !(q[:short_key].empty? && q[:key].empty?)
           key << (q[:short_key].empty? ? q[:key] : q[:short_key]).sort.join("&")
@@ -245,7 +274,7 @@ module RedisIndex
           key << digest(q[:arg].to_json)
         end
         key
-      }.join("&"))
+      }.join("&")) + ":sortby:#{@sort_index_name || 'nothing'}"
     end
     
     def digest(value)
@@ -260,8 +289,13 @@ module RedisIndex
     alias :size :length
     alias :count :length
     
-    def push_command(cmd, arg={})
-      cmd ||= arg[:command]
+    def push_command(*args)
+      if args.first.respond_to? :to_sym
+        cmd, arg =  args.first, args.second
+      else
+        cmd =  args.first[:command]
+        arg = args.first
+      end
       raise "command must be symbol-like" unless cmd.respond_to? :to_sym
       cmd = cmd.to_sym
       if (@queue.length == 0 || @queue.last[:command]!=cmd) || !([:zinterstore, :zunionstore].member? cmd)
@@ -278,7 +312,7 @@ module RedisIndex
     end
     
     def build_query_part(command, query, *arg)
-      query.push_command command, :key => results_key
+      [{ :command=>command, :key => results_key }]
     end
     
     def subquery
@@ -316,10 +350,6 @@ module RedisIndex
     def param(param_name)
       @params[param_name.to_sym]
     end
-    def sorting_by
-      @sort_by
-    end
-
     def union(index_name, val=nil)
       #print "UNION ", index_name, " : ", val.inspect, "\r\n"
       super @model.redis_index(index_name, SearchIndex), val
@@ -332,10 +362,8 @@ module RedisIndex
       @params[index_name.to_sym]=val if index_name.respond_to? :to_sym
       self
     end
-    def sort(index_name, direction=:asc)
-      super @model.redis_index(index_name, SearchIndex), direction
-      @sort_by = index_name
-      self
+    def sort(index_name, *arg)
+      super @model.redis_index(index_name, SearchIndex), *arg
     end
   end
   
