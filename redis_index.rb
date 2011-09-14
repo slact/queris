@@ -24,7 +24,7 @@ module RedisIndex
       @model.add_redis_index self
     end
     def val(value)
-      @value.nil? ? value : @value.call(value)
+      @value.nil? ? value : @value.call(value, self)
     end
     def digest(value)
       #value
@@ -142,16 +142,16 @@ module RedisIndex
       @value ||= proc { |x| x.to_f }
       super arg
     end
-    def val(val=nil)
-      @value.call val
+    def val(val=nil, obj=nil)
+      @value.call val, obj
     end
     def sorted_set_key(val=nil, prefix=nil)
       @keyf %[prefix || @model.redis_prefix, "(...)"]
     end
     
     def add(obj, value=nil)
-      my_val = val(value || value_is(obj))
-      @redis.zadd sorted_set_key(obj.send @attribute), val(my_val), obj.send(@key)
+      my_val = val(value || value_is(obj), obj)
+      @redis.zadd sorted_set_key(obj.send @attribute), my_val, obj.send(@key)
     end
     
     def remove(obj, value=nil)
