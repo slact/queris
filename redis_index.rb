@@ -68,16 +68,16 @@ module RedisIndex
       @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
     end
 
-    def build_query_part(command, query, value, obj=nil)
+    def build_query_part(command, query, value, multiplier=nil)
       ret = []
       if value.kind_of? Enumerable
         sub = query.subquery
-        value.to_a.uniq!.each {|val| sub.union self, val }
+        value.to_a.uniq.each {|val| sub.union self, val }
         set_key, short_key = sub.results_key, nil
       else
         set_key, short_key = set_key(value), set_key(value, "")
       end
-      ret.push :command => command, :key => set_key, :short_key => short_key
+      ret.push :command => command, :key => set_key, :short_key => short_key, :weight => multiplier
       ret
     end
   end
@@ -171,7 +171,6 @@ module RedisIndex
     private
     def range(command, query, min=nil, max=nil, exclude_min=nil, exclude_max=nil, range_only=nil, multiplier=1)
       key, ret = sorted_set_key, []
-      puts min.inspect, max.inspect, "YEEHAW"
       min_param, max_param = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
       ret << {:command => command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier} unless range_only
       ret <<  {:command => :zremrangebyscore, :arg => ['-inf', min_param]} unless min.nil?
@@ -194,23 +193,28 @@ module RedisIndex
     end
     
     def union(index, val)
-      index.build_query_part(:zunionstore, self, val).each do |cmd|
-        push_command cmd
-      end
+      @results_key = nil
+      push_commands index.build_query_part(:zunionstore, self, val, 1)
     end
     
     def intersect(index, val)
-      index.build_query_part(:zinterstore, self, val).each do |cmd|
-        push_command cmd
-      end
+      @results_key = nil
+      push_commands index.build_query_part(:zinterstore, self, val, 1)
+    end
+    
+    def diff(index, val)
+      @results_key = nil
+      push_commands index.build_query_part(:zunionstore, self, val, "-inf")
+      push_command :zremrangebyscore , :arg =>['-inf', '-inf']
     end
     
     def sort(index, reverse = nil)
+      @results_key = nil
       @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
       @sort_index_name = "#{reverse ? '-' : ''}#{index.name}"
-      @results_key = nil
       self
     end
+    
     def sorting_by? what
       @sort_index_name == what
     end
@@ -315,6 +319,10 @@ module RedisIndex
       last[:arg] = arg[:arg]
       self
     end
+    def push_commands (arr)
+      arr.each {|x| push_command x}
+      self
+    end
     
     def build_query_part(command, query, *arg)
       [{ :command=>command, :key => results_key }]
@@ -361,6 +369,12 @@ module RedisIndex
       @params[index_name.to_sym]=val if index_name.respond_to? :to_sym
       self
     end
+    def diff(index_name, val=nil)
+      #print "UNION ", index_name, " : ", val.inspect, "\r\n"
+      super @model.redis_index(index_name, SearchIndex), val
+      @params[index_name.to_sym]=val if index_name.respond_to? :to_sym
+      self
+    end
     def intersect(index_name, val=nil)
       #print "INTERSECT ", index_name, " : ", val.inspect, "\r\n"
       super @model.redis_index(index_name, SearchIndex), val
@@ -368,7 +382,7 @@ module RedisIndex
       self
     end
     def sort(index_name, *arg)
-      super @model.redis_index(index_name, SearchIndex), *arg
+      super @model.redis_index(index_name, RangeIndex), *arg
     end
   end
   
@@ -462,7 +476,7 @@ module RedisIndex
       redis_start_time, printy, total =Time.now, 0, all.count - 1
       all.each_with_index do |row, i|
         if printy == i
-          print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%"
+          print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
           printy += (total * 0.05).round
         end
         row.create_redis_indices 
