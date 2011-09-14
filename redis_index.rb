@@ -230,7 +230,7 @@ module RedisIndex
     end
     
     def query(force=nil)
-      @subquery.each { |q| q.query }
+      @subquery.each { |q| q.query(force) }
       if force || !@redis.exists(results_key)
         temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
         @redis.multi do
@@ -248,6 +248,7 @@ module RedisIndex
     end
     
     def send_command(cmd, temp_set_key, is_first=false)
+      Rails.logger.info ["SENDCOMM", temp_set_key, cmd]
       if [:zinterstore, :zunionstore].member? cmd[:command]
         if is_first
           @redis.send cmd[:command], temp_set_key, cmd[:key], :weights => cmd[:weight]
