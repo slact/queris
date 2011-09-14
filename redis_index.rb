@@ -67,12 +67,17 @@ module RedisIndex
     def remove(obj, val = nil)
       @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
     end
-    
+
     def build_query_part(command, query, value, obj=nil)
       ret = []
-      (value.kind_of?(Enumerable) ?  value : [ value ]).each do |a_value|
-        ret.push :command => command, :key => set_key(a_value), :short_key => set_key(a_value, "")
+      if value.kind_of? Enumerable
+        sub = query.subquery
+        value.to_a.uniq!.each {|val| sub.union self, val }
+        set_key, short_key = sub.results_key, nil
+      else
+        set_key, short_key = set_key(value), set_key(value, "")
       end
+      ret.push :command => command, :key => set_key, :short_key => short_key
       ret
     end
   end
@@ -315,8 +320,8 @@ module RedisIndex
       [{ :command=>command, :key => results_key }]
     end
     
-    def subquery
-      @subquery << self.class.new(self.model)
+    def subquery arg={}
+      @subquery << self.class.new(arg.merge :model => self.model)
       @subquery.last
     end
     
