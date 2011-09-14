@@ -226,7 +226,6 @@ module RedisIndex
       @subquery.each { |q| q.query }
       if force || !@redis.exists(results_key)
         temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
-        @redis.del temp_set if force
         @redis.multi do
           [@queue, @sort_queue].each do |queue|
             first = queue.first
