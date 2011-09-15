@@ -225,7 +225,7 @@ module RedisIndex
     end
     
     def sorting_by? what
-      @sort_index_name == what
+      @sort_index_name.to_sym == what.to_sym
     end
     def sorting_by
       @sort_index_name
