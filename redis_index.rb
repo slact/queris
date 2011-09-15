@@ -250,7 +250,6 @@ module RedisIndex
     end
     
     def send_command(cmd, temp_set_key, is_first=false)
-      Rails.logger.info ["SENDCOMM", temp_set_key, cmd]
       if [:zinterstore, :zunionstore].member? cmd[:command]
         if is_first
           @redis.send cmd[:command], temp_set_key, cmd[:key], :weights => cmd[:weight]
