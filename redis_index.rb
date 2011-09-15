@@ -165,7 +165,7 @@ module RedisIndex
     def build_query_part(command, query, value, multiplier=1)
       case value
       when Range
-        range command, query, val(value.begin), val(value.end), false, value.exclude_end?, nil, multiplier
+        range command, query, val(value.begin), val(value.end), true, value.exclude_end?, nil, multiplier
       when Enumerable
         raise ArgumentError, "RangeIndex doesn't accept non-Range Enumerables"
       when NilClass
