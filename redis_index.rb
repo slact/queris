@@ -302,6 +302,10 @@ module RedisIndex
       Digest::SHA1.hexdigest value.to_s
     end
     
+    def id
+      digest results_key
+    end
+    
     def length
       query
       @redis.zcard results_key
