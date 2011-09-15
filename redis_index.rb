@@ -294,7 +294,7 @@ module RedisIndex
           key << digest(q[:arg].to_json)
         end
         key
-      }.join("&")) + ":sortby:#{@sort_index_name || 'nothing'}"
+      }.join("&") + "subqueries:" + (@subquery || []).map{|q| q.id}.sort.join("&") ) + ":sortby:#{@sort_index_name || 'nothing'}"
     end
     
     def digest(value)
