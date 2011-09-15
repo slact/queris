@@ -211,7 +211,9 @@ module RedisIndex
     
     def diff(index, val)
       @results_key = nil
-      push_commands index.build_query_part(:zunionstore, self, val, "-inf")
+      (val.kind_of?(Enumerable) ? val : [val]).each do |v|
+          push_commands index.build_query_part(:zunionstore, self, v, "-inf")
+      end
       push_command :zremrangebyscore , :arg =>['-inf', '-inf']
     end
     
