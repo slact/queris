@@ -194,12 +194,14 @@ module RedisIndex
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
   class Query
-    attr_accessor :redis_prefix
+    attr_accessor :redis_prefix, :ttl, :created_at
     def initialize(arg)
       @queue, @sort_queue = [], []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
       @redis=arg[:redis] || $redis
       @subquery = []
+      @ttl ||= arg[:ttl] || 3.minutes
+      @created_at = Time.now
       self
     end
     
@@ -229,7 +231,7 @@ module RedisIndex
     end
     
     def sorting_by? what
-      @sort_index_name.to_sym == what.to_sym
+      @sort_index_name == what.to_sym
     end
     def sorting_by
       @sort_index_name
@@ -247,7 +249,7 @@ module RedisIndex
             end
           end
           @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
-          @redis.expire results_key, 3.minutes
+          @redis.expire results_key, @ttl
         end
       end
       self
