@@ -226,7 +226,7 @@ module RedisIndex
     def sort(index, reverse = nil)
       @results_key = nil
       @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
-      @sort_index_name = "#{reverse ? '-' : ''}#{index.name}"
+      @sort_index_name = "#{reverse ? '-' : ''}#{index.name}".to_sym
       self
     end
     
