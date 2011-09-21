@@ -201,7 +201,7 @@ module RedisIndex
       @redis=arg[:redis] || $redis
       @subquery = []
       @ttl ||= arg[:ttl] || 3.minutes
-      @created_at = Time.now
+      @created_at = Time.now.utc
       self
     end
     
