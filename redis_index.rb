@@ -2,7 +2,20 @@ require 'rubygems'
 require 'digest/sha1'
 
 module RedisIndex
-  
+  @indexed_models = []
+  def self.rebuild!(clear=false)
+    start = Time.now
+    if clear
+      $redis.flushdb
+      puts "Redis db flushed."
+    end
+    Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
+    @indexed_models.each{|m| m.build_redis_indices false}
+    printf "All redis indices rebuilt in %.2f sec.\r\n", Time.now-start
+  end
+  def self.add_model(model)
+    @indexed_models << model unless @indexed_models.member? model
+  end
   class Index
     attr_accessor :name, :redis, :model, :attribute
     def initialize(arg={})
@@ -465,6 +478,7 @@ module RedisIndex
     def index_attribute(arg={}, &block)
       index_class = arg[:index] || SearchIndex
       raise ArgumentError, "index argument must be in RedisIndex::Index if given" unless index_class <= Index
+      RedisIndex.add_model self
       index_class.new(arg.merge(:model => self), &block)
     end
 
@@ -507,7 +521,7 @@ module RedisIndex
       query
     end
 
-    def build_redis_indices
+    def build_redis_indices(build_foreign = true)
       start_time = Time.now
       all = self.find(:all)
       sql_time = Time.now - start_time
@@ -527,8 +541,8 @@ module RedisIndex
           foreign+=1
           index.real_index.model.send :build_redis_indices 
         end
-      end
-      puts "Built #{redis_index.count} ind#{redis_index.index.count == 1 ? "ex" : "ices"} (#{foreign} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
+      end if build_foreign
+      puts "Built #{redis_index.count} ind#{redis_index.index.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
       self
     end
       
