@@ -526,12 +526,15 @@ module RedisIndex
       all = self.find(:all)
       sql_time = Time.now - start_time
       redis_start_time, printy, total =Time.now, 0, all.count - 1
-      all.each_with_index do |row, i|
-        if printy == i
-          print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
-          printy += (total * 0.05).round
+      $redis.multi do
+        all.each_with_index do |row, i|
+          if printy == i
+            print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
+            printy += (total * 0.05).round
+          end
+          row.create_redis_indices 
         end
-        row.create_redis_indices 
+        print "\rBuilt all native indices for #{self.name}. Committting to redis..."
       end
       print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{sql_time.round 3} sec. for SQL).\r\n"
       #update all foreign indices
