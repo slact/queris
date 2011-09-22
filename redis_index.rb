@@ -12,6 +12,7 @@ module RedisIndex
     Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
     @indexed_models.each{|m| m.build_redis_indices false}
     printf "All redis indices rebuilt in %.2f sec.\r\n", Time.now-start
+    self
   end
   def self.add_model(model)
     @indexed_models << model unless @indexed_models.member? model
@@ -534,7 +535,7 @@ module RedisIndex
           end
           row.create_redis_indices 
         end
-        print "\rBuilt all native indices for #{self.name}. Committting to redis..."
+        print "\rBuilt all native indices for #{self.name}. Committing to redis..."
       end
       print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{sql_time.round 3} sec. for SQL).\r\n"
       #update all foreign indices
