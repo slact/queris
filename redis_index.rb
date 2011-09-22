@@ -208,7 +208,7 @@ module RedisIndex
   
     # be advised: this construction has little to no error-checking, so garbage in garbage out.
   class Query
-    attr_accessor :redis_prefix, :ttl, :created_at
+    attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name
     def initialize(arg)
       @queue, @sort_queue = [], []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
@@ -239,8 +239,13 @@ module RedisIndex
     
     def sort(index, reverse = nil)
       @results_key = nil
-      @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
-      @sort_index_name = "#{reverse ? '-' : ''}#{index.name}".to_sym
+      if index.nil?
+        @sort_queue = []
+        @sort_index_name = nil
+      else
+        @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
+        @sort_index_name = "#{reverse ? '-' : ''}#{index.name}".to_sym
+      end
       self
     end
     
@@ -302,15 +307,15 @@ module RedisIndex
     
     
     def results_key
-      @results_key ||= "#{@redis_prefix}results:" + digest( @queue.map { |q| 
+      @results_key ||= "#{@redis_prefix}results:" << digest( @queue.map { |q| 
         key = "#{q[:command]}:"
         if !(q[:short_key].empty? && q[:key].empty?)
           key << (q[:short_key].empty? ? q[:key] : q[:short_key]).sort.join("&")
         else
-          key << digest(q[:arg].to_json)
+          key << digest(q[:arg].kind_of?(Enumerable) ? Marshal.dump(q[:arg]) : q[:arg].to_json)
         end
         key
-      }.join("&") + "subqueries:" + (@subquery || []).map{|q| q.id}.sort.join("&") ) + ":sortby:#{@sort_index_name || 'nothing'}"
+      }.join("&")) << ":subqueries:#{(@subquery ? (@subquery || []).map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
     end
     
     def digest(value)
@@ -366,7 +371,7 @@ module RedisIndex
       else
         subq = self.class.new(arg.merge :redis_prefix => redis_prefix)
       end
-      @subquery << subq unless arg.kind_of?(Query) && @subquery.index{|q| q.kind_of?(Query) && q.id == id}.nil?
+      @subquery << subq
       @subquery.last
     end
     
@@ -425,8 +430,19 @@ module RedisIndex
       @params[index_name.to_sym]=val if index_name.respond_to? :to_sym
       self
     end
-    def sort(index_name, *arg)
-      super @model.redis_index(index_name, RangeIndex), *arg
+    def sort(index_name, reverse = nil)
+      if index_name.kind_of? Query
+        raise "sort can be extracted only from query using the same model...", unless index_name.model == model
+        sort_q = index_name
+        index_name = sort_q.sort_index_name
+        #sort_q.sort nil
+      end
+      if index_name.respond_to?('[]') && index_name[0]=='-'
+        reverse = true
+        index_name = index_name[1..-1]
+      end
+      print index_name, reverse
+      super @model.redis_index(index_name, RangeIndex), reverse
     end
     def subquery(arg={})
       if arg.kind_of? Query
@@ -441,14 +457,13 @@ module RedisIndex
   def self.included(base)
     base.class_eval do
       class << self
+        def redis_indices
+          @redis_indices
+        end
         def redis_index (index_name=nil, index_class = Index)
           raise ArgumentError, "#{index_class} must be a subclass of RedisIndex::Index" unless index_class <= Index
-          case index_name 
-          when index_class
-            return index_name 
-          when NilClass
-            return @redis_indices 
-          when Query
+          case index_name
+          when index_class, NilClass, Query
             return index_name
           end
           @redis_indices||=[] #this line sucks.
@@ -540,13 +555,13 @@ module RedisIndex
       print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{sql_time.round 3} sec. for SQL).\r\n"
       #update all foreign indices
       foreign = 0
-      redis_index.each do |index|
+      redis_indices.each do |index|
         if index.kind_of? ForeignIndex
           foreign+=1
           index.real_index.model.send :build_redis_indices 
         end
       end if build_foreign
-      puts "Built #{redis_index.count} ind#{redis_index.index.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
+      puts "Built #{redis_indices.count} ind#{redis_indices.index.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
       self
     end
       
@@ -567,7 +582,7 @@ module RedisIndex
   
   [:create, :update, :delete].each do |op|
     define_method "#{op}_redis_indices" do
-      self.class.redis_index.each { |index| index.send op, self}
+      self.class.redis_indices.each { |index| index.send op, self}
     end
   end
   
