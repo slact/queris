@@ -342,18 +342,31 @@ module RedisIndex
     end
     
     def build_query_part(command, query, *arg)
+      query.subquery self
       [{ :command=>command, :key => results_key }]
     end
     
     def subquery arg={}
-      @subquery << self.class.new(arg.merge :model => self.model)
+      if arg.kind_of? Query
+        subq = arg
+      else
+        subq = self.class.new(arg.merge :redis_prefix => redis_prefix)
+      end
+      @subquery << subq unless arg.kind_of?(Query) && @subquery.index{|q| q.kind_of?(Query) && q.id == id}.nil?
       @subquery.last
     end
     
     def marshal_dump
       instance_values.merge "redis" => false
     end
-    def marshal_load(arg)
+    def marshal_load(json)
+      if json.kind_of? String 
+        arg = JSON.load(json)
+      elsif json.kind_of? Enumerable
+        arg = json
+      else
+        arg = [] #SILENTLY FAIL RELOADING QUERY. THIS IS A *DANGER*OUS DESIGN DECISION MADE FOR THE SAKE OF CONVENIENCE.
+      end
       arg.each do |n,v|
         instance_variable_set "@#{n}", v
       end
@@ -367,7 +380,7 @@ module RedisIndex
       @params = {}
       @model = arg.kind_of?(Hash) ? arg[:model] : arg
       raise ArgumentError, ":model arg must be an ActiveRecord model, got #{arg.inspect} instead." unless @model.kind_of?(Class) && @model < ActiveRecord::Base
-      super :prefix => @model.redis_prefix
+      super arg.merge(:prefix => @model.redis_prefix)
     end
 
     def results(*arg)
@@ -400,6 +413,14 @@ module RedisIndex
     end
     def sort(index_name, *arg)
       super @model.redis_index(index_name, RangeIndex), *arg
+    end
+    def subquery(arg={})
+      if arg.kind_of? Query
+        raise "Trying to use a subquery from a different model" unless arg.model == model
+      else
+        arg[:model]=model
+      end
+      super arg
     end
   end
   
@@ -480,8 +501,8 @@ module RedisIndex
       self
     end
 
-    def redis_query
-      query = ActiveRecordQuery.new :model => self
+    def redis_query (arg={})
+      query = ActiveRecordQuery.new arg.merge(:model => self)
       yield query if block_given?
       query
     end
