@@ -39,8 +39,8 @@ module RedisIndex
     def val(value)
       @value.nil? ? value : @value.call(value)
     end
-    def index_val(value)
-      (@index_value || @value).nil? ? value : (@index_value || @value).call(value)
+    def index_val(value, obj=nil)
+      (@index_value || @value).nil? ? value : (@index_value || @value).call(value, obj)
     end
     def digest(value)
       #value
@@ -79,14 +79,14 @@ module RedisIndex
     end
     def add(obj, value = nil)
       i=0
-      value = index_val( value || obj.send(@attribute))
+      value = index_val( value || obj.send(@attribute), obj)
       (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
         i +=1
         @redis.sadd set_key(val), obj.send(@key)
       end
     end
     def remove(obj, value = nil)
-      value = index_val( value || obj.send(@attribute))
+      value = index_val( value || obj.send(@attribute), obj)
       (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
         @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
       end
