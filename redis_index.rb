@@ -98,11 +98,11 @@ module RedisIndex
       if value.kind_of? Enumerable
         sub = query.subquery
         value.to_a.uniq.each {|val| sub.union self, val }
-        set_key, short_key = sub.results_key, nil
+        set_key = sub.results_key
       else
-        set_key, short_key = set_key(value), set_key(value, "")
+        set_key = set_key(value)
       end
-      ret.push :command => command, :key => set_key, :short_key => short_key, :weight => multiplier
+      ret.push :command => command, :key => set_key, :weight => multiplier
       ret
     end
   end
@@ -197,7 +197,7 @@ module RedisIndex
     def range(command, query, min=nil, max=nil, exclude_min=nil, exclude_max=nil, range_only=nil, multiplier=1)
       key, ret = sorted_set_key, []
       min_param, max_param = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
-      ret << {:command => command, :key => key, :short_key => sorted_set_key(nil, ""), :weight => multiplier} unless range_only
+      ret << {:command => command, :key => key, :weight => multiplier} unless range_only
       ret <<  {:command => :zremrangebyscore, :arg => ['-inf', min_param]} unless min.nil?
       ret << {:command => :zremrangebyscore, :arg => [max_param, 'inf']} unless max.nil?
       ret
@@ -264,6 +264,14 @@ module RedisIndex
           [@queue, @sort_queue].each do |queue|
             first = queue.first
             queue.each do |cmd|
+              if cmd[:subquery] 
+                if !cmd[:subquery_id] || !(subquery = @subquery[cmd[:subquery_id]])
+                  raise "Unable to process query #{id}: expected subquery #{cmd[:subquery_id] || "<unknown>"} missing."
+                end
+                raise "Can't transform redis command for subquery: no idea where the key should be placed..." unless cmd[:key]
+                raise "Invalid redis command containing subquery..." unless cmd[:key].count == 1
+                cmd[:key] = [ subquery.results_key ]
+              end
               send_command cmd, temp_set, (queue==@queue && first==cmd)
             end
           end
@@ -342,16 +350,27 @@ module RedisIndex
       end
       raise "command must be symbol-like" unless cmd.respond_to? :to_sym
       cmd = cmd.to_sym
-      if (@queue.length == 0 || @queue.last[:command]!=cmd) || !([:zinterstore, :zunionstore].member? cmd)
-        @queue.push :command => cmd, :key =>[], :weight => [], :short_key => []
+      if (@queue.length == 0 || @queue.last[:command]!=cmd) || @queue.last[:subquery] || arg[:subquery] || !([:zinterstore, :zunionstore].member? cmd)
+        @queue.push :command => cmd, :key =>[], :weight => []
       end
       last = @queue.last
+      
       unless arg[:key].nil?
         last[:key] << arg[:key]
         last[:weight] << arg[:weight] || 0
       end
-      last[:short_key] << arg[:short_key] unless arg[:short_key].nil?
       last[:arg] = arg[:arg]
+      [:subquery, :subquery_id].each do |param|
+        if last[param].kind_of? Enumerable
+          if arg[param].kind_of? Enumerable
+            last[param] += arg[param]
+          else
+            last[param] << val || 0
+          end
+        else
+          last[param] = arg[param]
+        end
+      end
       self
     end
     def push_commands (arr)
@@ -359,19 +378,23 @@ module RedisIndex
       self
     end
     
-    def build_query_part(command, query, *arg)
-      query.subquery self
-      [{ :command=>command, :key => results_key }]
+    def build_query_part(command, query, val=nil, multiplier = 1)
+      query.subquery(self) unless query.subquery_id(self)
+      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key => 'NOT_THE_REAL_KEY_AT_ALL', :weight => multiplier }]
     end
     
     def subquery arg={}
+      @results_key = nil
       if arg.kind_of? Query
         subq = arg
       else
-        subq = self.class.new(arg.merge :redis_prefix => redis_prefix)
+        subq = self.class.new(arg.merge :redis_prefix => redis_prefix, :ttl => @ttl)
       end
       @subquery << subq
       @subquery.last
+    end
+    def subquery_id(subquery)
+      @subquery.index subquery
     end
     
     def marshal_dump
@@ -431,16 +454,15 @@ module RedisIndex
     end
     def sort(index_name, reverse = nil)
       if index_name.kind_of? Query
-        raise "sort can be extracted only from query using the same model...", unless index_name.model == model
+        raise "sort can be extracted only from query using the same model..." unless index_name.model == model
         sort_q = index_name
         index_name = sort_q.sort_index_name
         #sort_q.sort nil
       end
-      if index_name.respond_to?('[]') && index_name[0]=='-'
+      if index_name.respond_to?('[]') && index_name[0] == '-'
         reverse = true
         index_name = index_name[1..-1]
       end
-      print index_name, reverse
       super @model.redis_index(index_name, RangeIndex), reverse
     end
     def subquery(arg={})
