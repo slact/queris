@@ -29,7 +29,7 @@ module RedisIndex
       @attribute = @attribute.to_sym unless !@attribute
       @name = @name.to_sym
       @key ||= :id #object's key attribute (default is 'id')
-      @keyf ||= "%s#{self.class.name.sub /^.*::/, ""}:#{@name}=%s"
+      @keyf ||= "%s#{self.class.name.sub(/^.*::/, "")}:#{@name}=%s"
       if block_given?
         yield self, arg
       end
@@ -76,7 +76,7 @@ module RedisIndex
     end
     
     def set_key(value, prefix=nil)
-      @keyf %[prefix || @redis_prefix || @model.redis_prefix, digest(val value)]
+      (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, digest(val value)]
     end
     def add(obj, value = nil)
       i=0
@@ -117,7 +117,7 @@ module RedisIndex
     alias :delete :create
     alias :update :create
     def set_key(*arg)
-      @real_index.set_key *arg
+      @real_index.set_key(*arg)
     end
     def method_missing(method)
       @real_index.method
@@ -129,7 +129,7 @@ module RedisIndex
   class PresenceIndex < SearchIndex
     def initialize(arg)
       super arg
-      @counter_keyf = "#{@model.redis_prefix}#{self.class.name.sub /^.*::/, ""}:#{@name}:#{@attribute}=%s:counter"
+      @counter_keyf = "#{@model.redis_prefix}#{self.class.name.sub(/^.*::/, "")}:#{@name}:#{@attribute}=%s:counter"
       @attribute = @key
       @threshold ||= 1
     end
@@ -164,7 +164,7 @@ module RedisIndex
       @value.call val, obj
     end
     def sorted_set_key(val=nil, prefix=nil)
-      @keyf %[prefix || @model.redis_prefix, "(...)"]
+      (@keyf) %[prefix || @model.redis_prefix, "(...)"]
     end
     
     def add(obj, value=nil)
@@ -299,7 +299,7 @@ module RedisIndex
       end
       res = reverse ? @redis.zrange(results_key, first, last) : @redis.zrevrange(results_key, first, last)
       if block_given?
-        res.map! &block
+        res.map!(&block)
       end
       res
     end
@@ -308,14 +308,13 @@ module RedisIndex
     
     def results_key
       @results_key ||= "#{@redis_prefix}results:" << digest( @queue.map { |q| 
-        key = "#{q[:command]}:"
-        if !(q[:short_key].empty? && q[:key].empty?)
-          key << (q[:short_key].empty? ? q[:key] : q[:short_key]).sort.join("&")
-        else
-          key << digest(q[:arg].kind_of?(Enumerable) ? Marshal.dump(q[:arg]) : q[:arg].to_json)
+        key = "#{q[:command]}"
+        unless [:key].empty?
+          key << ":key=#{q[:key].sort.join("&")}"
         end
+        key << ":arg=#{q[:arg].to_json}" unless q[:arg].nil?
         key
-      }.join("&")) << ":subqueries:#{(@subquery ? (@subquery || []).map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
+      }.join("&")) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
     end
     
     def digest(value)
@@ -403,7 +402,7 @@ module RedisIndex
     end
 
     def results(*arg)
-      super *arg do |id|
+      super(*arg) do |id|
         @model.find_cached id
       end
     end
