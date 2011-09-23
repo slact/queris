@@ -457,7 +457,7 @@ module RedisIndex
         raise "sort can be extracted only from query using the same model..." unless index_name.model == model
         sort_q = index_name
         index_name = sort_q.sort_index_name
-        #sort_q.sort nil
+        sort_q.sort nil #unsort subquery
       end
       if index_name.respond_to?('[]') && index_name[0] == '-'
         reverse = true
