@@ -257,8 +257,9 @@ module RedisIndex
     end
     
     def query(force=nil)
-      @subquery.each { |q| q.query(force) }
+      #puts "QUERYING #{results_key}"
       if force || !@redis.exists(results_key)
+        @subquery.each { |q| q.query force }
         temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
         @redis.multi do
           [@queue, @sort_queue].each do |queue|
