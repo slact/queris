@@ -231,8 +231,11 @@ module RedisIndex
     
     def diff(index, val)
       @results_key = nil
-      (val.kind_of?(Enumerable) ? val : [val]).each do |v|
-          push_commands index.build_query_part(:zunionstore, self, v, "-inf")
+      if val.kind_of?(Range) && index.kind_of?(RangeIndex) #this doubtfully belongs here. But our Sorted Set diff is a bit of a hack anyway, so...
+        sub = subquery.union(index, val)
+        push_commands sub.build_query_part(:zunionstore, self, val, "-inf")
+      else
+        push_commands index.build_query_part(:zunionstore, self, val, "-inf")
       end
       push_command :zremrangebyscore , :arg =>['-inf', '-inf']
     end
