@@ -1,3 +1,4 @@
+# encoding: utf-8
 require 'rubygems'
 require 'digest/sha1'
 
@@ -211,6 +212,7 @@ module RedisIndex
     attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name
     def initialize(arg)
       @queue, @sort_queue = [], []
+      @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
       @redis=arg[:redis] || $redis
       @subquery = []
@@ -222,11 +224,13 @@ module RedisIndex
     def union(index, val)
       @results_key = nil
       push_commands index.build_query_part(:zunionstore, self, val, 1)
+      push_explanation :union, index, val.to_s
     end
     
     def intersect(index, val)
       @results_key = nil
       push_commands index.build_query_part(:zinterstore, self, val, 1)
+      push_explanation :intersect, index, val.to_s
     end
     
     def diff(index, val)
@@ -238,6 +242,7 @@ module RedisIndex
         push_commands index.build_query_part(:zunionstore, self, val, "-inf")
       end
       push_command :zremrangebyscore , :arg =>['-inf', '-inf']
+      push_explanation :diff, index, val.to_s
     end
     
     def sort(index, reverse = nil)
@@ -402,8 +407,41 @@ module RedisIndex
     end
     
     def marshal_dump
-      instance_values.merge "redis" => false
+      instance_values.except :redis, :info
     end
+
+    def push_explanation(op, index, value)
+      @explanation << [op, index, value.to_s]
+      self
+    end
+    
+    def explain
+      res = @explanation.map do |ex|
+        if @explanation.first != ex
+          case ex.first
+          when :diff
+            op= "∖ "
+          when :intersect
+            op= "∩ "
+          when :union
+            op= "∪ "
+          end
+        elsif ex.first == :diff
+          op = "∅ ∖ "
+        else
+          op = ""
+        end
+
+        if ex.second.kind_of? Query
+          s = ex.second.explain
+        else
+          s = "#{ex.second.name}#{!ex.third.empty? ? '<' + ex.third + '>' : nil}"
+        end
+        "#{op}#{s}"
+      end
+      "(#{res.join " "})"
+    end
+
     def marshal_load(json)
       if json.kind_of? String 
         arg = JSON.load(json)
