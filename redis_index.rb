@@ -611,6 +611,8 @@ module RedisIndex
       query
     end
 
+    alias_method :query, :redis_query unless self.respond_to? :query
+    
     def build_redis_indices(build_foreign = true)
       start_time = Time.now
       all = self.find(:all)
