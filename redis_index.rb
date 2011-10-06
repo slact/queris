@@ -405,43 +405,54 @@ module RedisIndex
     def subquery_id(subquery)
       @subquery.index subquery
     end
-    
-    def marshal_dump
-      instance_values.except :redis, :info
-    end
 
-    def push_explanation(op, index, value)
-      @explanation << [op, index, value.to_s]
+    def push_explanation(operation, index, value)
+      #set operation
+      if !@explanation.empty?
+        case operation
+        when :diff
+          op= "∖ "
+        when :intersect
+          op= "∩ "
+        when :union
+          op= "∪ "
+        end
+      elsif operation == :diff
+        op = "∅ ∖ "
+      else
+        op = ""
+      end
+
+      #index and value
+      if index.kind_of? Query #we take this roundabout route because subqueries can be altered
+        s = "{subquery #{subquery_id index}}"
+      else
+        s = "#{index.name}#{!value.to_s.empty? ? '<' + value.to_s + '>' : nil}"
+      end
+      
+      @explanation << "#{op}#{s}"
       self
     end
     
     def explain
-      res = @explanation.map do |ex|
-        if @explanation.first != ex
-          case ex.first
-          when :diff
-            op= "∖ "
-          when :intersect
-            op= "∩ "
-          when :union
-            op= "∪ "
-          end
-        elsif ex.first == :diff
-          op = "∅ ∖ "
+      explaining = @explanation.map do |part| #subqueries!
+        if match = part.match(/(?<op>.*){subquery (?<id>\d+)}$/)
+          "#{match[:op]}#{@subquery[match[:id].to_i].explain}"
         else
-          op = ""
+          part
         end
-
-        if ex.second.kind_of? Query
-          s = ex.second.explain
-        else
-          s = "#{ex.second.name}#{!ex.third.empty? ? '<' + ex.third + '>' : nil}"
-        end
-        "#{op}#{s}"
       end
-      "(#{res.join " "})"
+      if explaining.empty?
+        "(∅)"
+      else 
+        "(#{explaining.join ' '})"
+      end
     end
-
+    
+    def marshal_dump
+      instance_values.merge "redis" => false
+    end
+    
     def marshal_load(json)
       if json.kind_of? String 
         arg = JSON.load(json)
