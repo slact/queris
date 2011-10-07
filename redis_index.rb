@@ -449,6 +449,19 @@ module RedisIndex
       end
     end
     
+    def info(indent="")
+      info =  "#{indent}key: #{results_key}\r\n"
+      info << "#{indent}id: #{id}, ttl: #{@ttl}, sort: #{sorting_by || "none"}\r\n"
+      info << "#{indent}#{explain}\r\n"
+      if !@subquery.empty?
+        info << "#{indent}subqueries:\r\n"
+        @subquery.each do |sub|
+          info << sub.info(indent + "  ")
+        end
+      end
+      info
+    end
+    
     def marshal_dump
       instance_values.merge "redis" => false
     end
