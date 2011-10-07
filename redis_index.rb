@@ -506,11 +506,15 @@ module RedisIndex
       self
     end
     def sort(index_name, reverse = nil)
-      if index_name.kind_of?(Query) && !index_name.sorting_by.nil?
+      if index_name.kind_of?(Query)
         raise "sort can be extracted only from query using the same model..." unless index_name.model == model
-        sort_q = index_name
-        index_name = sort_q.sort_index_name
-        sort_q.sort nil #unsort subquery
+        sort_query = index_name
+        if sort_query.sorting_by.nil?
+          index_name = nil
+        else
+          index_name = sort_query.sort_index_name
+          sort_query.sort nil #unsort sorted query
+        end
       end
       if index_name.respond_to?('[]') && index_name[0] == '-'
         reverse = true
