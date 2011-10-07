@@ -324,14 +324,7 @@ module RedisIndex
     
     
     def results_key
-      @results_key ||= "#{@redis_prefix}results:" << digest( @queue.map { |q| 
-        key = "#{q[:command]}"
-        unless [:key].empty?
-          key << ":key=#{q[:key].sort.join("&")}"
-        end
-        key << ":arg=#{q[:arg].to_json}" unless q[:arg].nil?
-        key
-      }.join("&")) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
+      @results_key ||= "#{@redis_prefix}results:" << digest(explain true) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
     end
     
     def digest(value)
@@ -434,9 +427,9 @@ module RedisIndex
       self
     end
     
-    def explain
+    def explain(omit_subqueries=false)
       explaining = @explanation.map do |part| #subqueries!
-        if match = part.match(/(?<op>.*){subquery (?<id>\d+)}$/)
+        if !omit_subqueries && (match = part.match(/(?<op>.*){subquery (?<id>\d+)}$/))
           "#{match[:op]}#{@subquery[match[:id].to_i].explain}"
         else
           part
