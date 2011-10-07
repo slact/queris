@@ -453,11 +453,11 @@ module RedisIndex
       instance_values.merge "redis" => false
     end
     
-    def marshal_load(json)
-      if json.kind_of? String 
-        arg = JSON.load(json)
-      elsif json.kind_of? Enumerable
-        arg = json
+    def marshal_load(data)
+      if data.kind_of? String 
+        arg = JSON.load(data)
+      elsif data.kind_of? Enumerable
+        arg = data
       else
         arg = [] #SILENTLY FAIL RELOADING QUERY. THIS IS A *DANGER*OUS DESIGN DECISION MADE FOR THE SAKE OF CONVENIENCE.
       end
