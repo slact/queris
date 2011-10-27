@@ -5,7 +5,7 @@ module RedisIndex
       arg.each do |opt, val|
         instance_variable_set "@#{opt}".to_sym, val
       end
-      @redis ||= $redis
+      @redis ||= RedisIndex.redis
       @name ||= @attribute
       @attribute ||= @name
       @attribute = @attribute.to_sym unless !@attribute

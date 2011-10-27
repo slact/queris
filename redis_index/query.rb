@@ -113,8 +113,6 @@ module RedisIndex
       res
     end
     
-    
-    
     def results_key
       @results_key ||= "#{@redis_prefix}results:" << digest(explain true) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
     end
@@ -262,7 +260,7 @@ module RedisIndex
       arg.each do |n,v|
         instance_variable_set "@#{n}", v
       end
-      @redis ||= $redis
+      @redis ||= redis
     end
   end
 end
