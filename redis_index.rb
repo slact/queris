@@ -1,12 +1,19 @@
 # encoding: utf-8
 require 'rubygems'
 require 'digest/sha1'
+require "redis_index/indices"
+require "redis_index/query"
+
 module RedisIndex
   @indexed_models = []
+  @redis
+  def self.redis
+    @redis || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
+  end
   def self.rebuild!(clear=false)
     start = Time.now
     if clear
-      $redis.flushdb
+      @redis.flushdb
       puts "Redis db flushed."
     end
     Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
@@ -17,7 +24,9 @@ module RedisIndex
   def self.add_model(model)
     @indexed_models << model unless @indexed_models.member? model
   end
-  
+  def self.use_redis(redis)
+    @redis=redis
+  end
   
   def self.included(base)
     base.class_eval do
@@ -43,22 +52,26 @@ module RedisIndex
         def redis_prefix
           @redis_prefix||="Rails:#{Rails.application.class.parent.to_s}:#{self.name}:"
         end
+        include ObjectMixin
       end
     end
-    base.extend ClassMethods
-    base.after_create :create_redis_indices
-    base.before_save :update_redis_indices, :uncache
-    base.before_destroy :delete_redis_indices, :uncache
-    base.after_initialize do 
-      
+    puts ActiveRecord
+    puts base.superclass == ActiveRecord::Base
+    puts "wHOA"
+    if ActiveRecord and base.superclass == ActiveRecord::Base then
+      puts "about to extend AR"
+      require "redis_index/mixin/active_record"
+      base.send :include, ActiveRecordMixin
     end
-
   end
 
-  module ClassMethods
+  module ObjectMixin
+    def self.included base
+      base.extend ObjectMixin
+    end
     def index_attribute(arg={}, &block)
-      index_class = arg[:index] || SearchIndex
-      raise ArgumentError, "index argument must be in RedisIndex::Index if given" unless index_class <= Index
+      index_class = arg[:index] || RedisIndex::SearchIndex
+      raise ArgumentError, "index argument must be in RedisIndex::Index if given" unless index_class <= RedisIndex::Index
       RedisIndex.add_model self
       index_class.new(arg.merge(:model => self), &block)
     end
@@ -68,7 +81,7 @@ module RedisIndex
       index = index_attribute(arg) do |index|
         index.name = "foreign_index_#{index.name}"
       end
-      arg[:model].send :index_attribute, arg.merge(:index=> ForeignIndex, :real_index => index)
+      arg[:model].send :index_attribute, arg.merge(:index=> RedisIndex::ForeignIndex, :real_index => index)
     end
 
     def index_attribute_from(arg) #doesn't work yet.
@@ -78,7 +91,7 @@ module RedisIndex
     end
 
     def index_range_attribute(arg)
-      index_attribute arg.merge :index => RangeIndex
+      index_attribute arg.merge :index => RedisIndex::RangeIndex
     end
     def index_range_attributes(*arg)
       base_param = arg.last.kind_of?(Hash) ? arg.pop : {}
@@ -97,7 +110,7 @@ module RedisIndex
     end
 
     def redis_query (arg={})
-      query = ActiveRecordQuery.new arg.merge(:model => self)
+      query = RedisIndex::Query.new arg.merge(:model => self)
       yield query if block_given?
       query
     end
@@ -109,7 +122,7 @@ module RedisIndex
       all = self.find(:all)
       sql_time = Time.now - start_time
       redis_start_time, printy, total =Time.now, 0, all.count - 1
-      $redis.multi do
+      RedisIndex.redis.multi do
         all.each_with_index do |row, i|
           if printy == i
             print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
@@ -123,7 +136,7 @@ module RedisIndex
       #update all foreign indices
       foreign = 0
       redis_indices.each do |index|
-        if index.kind_of? ForeignIndex
+        if index.kind_of? RedisIndex::ForeignIndex
           foreign+=1
           index.real_index.model.send :build_redis_indices 
         end
@@ -138,10 +151,10 @@ module RedisIndex
     
     def find_cached(id)
       key = cache_key id
-      if marshaled = $redis.get(key)
+      if marshaled = RedisIndex.redis.get(key)
         Marshal.load marshaled
       elsif (found = find id)
-        $redis.set key, Marshal.dump(found)
+        RedisIndex.redis.set key, Marshal.dump(found)
         found
       end
     end
@@ -154,9 +167,8 @@ module RedisIndex
   end
   
   def uncache
-    $redis.del self.class.cache_key(id)
+    RedisIndex.redis.del self.class.cache_key(id)
   end
 end
-require "redis_index/indices"
-require "redis_index/query"
+
 require "redis_index/mixin/active_record"

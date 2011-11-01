@@ -1,7 +1,17 @@
 module RedisIndex
   
   module ActiveRecordMixin
-    #TODO
+    def self.included(base)
+      base.after_create :create_redis_indices
+      base.before_save :update_redis_indices, :uncache
+      base.before_destroy :delete_redis_indices, :uncache
+      base.extend ActiveRecordMixin
+    end
+    def redis_query (arg={})
+      query = ActiveRecordQuery.new arg.merge(:model => self)
+      yield query if block_given?
+      query
+    end
   end
   
   class ActiveRecordQuery < Query
