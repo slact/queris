@@ -1,5 +1,5 @@
 # encoding: utf-8
-module RedisIndex
+module Queris
   class Query
     attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name
     def initialize(arg)

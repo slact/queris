@@ -1,4 +1,4 @@
-module RedisIndex
+module Queris
   
   module ActiveRecordMixin
     def self.included(base)

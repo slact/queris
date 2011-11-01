@@ -1,11 +1,11 @@
-module RedisIndex
+module Queris
   class Index
     attr_accessor :name, :redis, :model, :attribute
     def initialize(arg={})
       arg.each do |opt, val|
         instance_variable_set "@#{opt}".to_sym, val
       end
-      @redis ||= RedisIndex.redis
+      @redis ||= Queris.redis
       @name ||= @attribute
       @attribute ||= @name
       @attribute = @attribute.to_sym unless !@attribute

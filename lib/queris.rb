@@ -1,10 +1,11 @@
 # encoding: utf-8
+require "queris/version"
 require 'rubygems'
 require 'digest/sha1'
-require "redis_index/indices"
-require "redis_index/query"
+require "queris/indices"
+require "queris/query"
 
-module RedisIndex
+module Queris
   @indexed_models = []
   @redis
   def self.redis
@@ -35,7 +36,7 @@ module RedisIndex
           @redis_indices
         end
         def redis_index (index_name=nil, index_class = Index)
-          raise ArgumentError, "#{index_class} must be a subclass of RedisIndex::Index" unless index_class <= Index
+          raise ArgumentError, "#{index_class} must be a subclass of Queris::Index" unless index_class <= Index
           case index_name
           when index_class, NilClass, Query
             return index_name
@@ -60,7 +61,7 @@ module RedisIndex
     puts "wHOA"
     if ActiveRecord and base.superclass == ActiveRecord::Base then
       puts "about to extend AR"
-      require "redis_index/mixin/active_record"
+      require "queris/mixin/active_record"
       base.send :include, ActiveRecordMixin
     end
   end
@@ -70,9 +71,9 @@ module RedisIndex
       base.extend ObjectMixin
     end
     def index_attribute(arg={}, &block)
-      index_class = arg[:index] || RedisIndex::SearchIndex
-      raise ArgumentError, "index argument must be in RedisIndex::Index if given" unless index_class <= RedisIndex::Index
-      RedisIndex.add_model self
+      index_class = arg[:index] || Queris::SearchIndex
+      raise ArgumentError, "index argument must be in Queris::Index if given" unless index_class <= Queris::Index
+      Queris.add_model self
       index_class.new(arg.merge(:model => self), &block)
     end
 
@@ -81,17 +82,17 @@ module RedisIndex
       index = index_attribute(arg) do |index|
         index.name = "foreign_index_#{index.name}"
       end
-      arg[:model].send :index_attribute, arg.merge(:index=> RedisIndex::ForeignIndex, :real_index => index)
+      arg[:model].send :index_attribute, arg.merge(:index=> Queris::ForeignIndex, :real_index => index)
     end
 
     def index_attribute_from(arg) #doesn't work yet.
       model = arg[:model]
-      model.send(:include, RedisIndex) unless model.include? RedisIndex
+      model.send(:include, Queris) unless model.include? Queris
       model.send(:index_attribute_for, arg.merge(:model => self))
     end
 
     def index_range_attribute(arg)
-      index_attribute arg.merge :index => RedisIndex::RangeIndex
+      index_attribute arg.merge :index => Queris::RangeIndex
     end
     def index_range_attributes(*arg)
       base_param = arg.last.kind_of?(Hash) ? arg.pop : {}
@@ -110,7 +111,7 @@ module RedisIndex
     end
 
     def redis_query (arg={})
-      query = RedisIndex::Query.new arg.merge(:model => self)
+      query = Queris::Query.new arg.merge(:model => self)
       yield query if block_given?
       query
     end
@@ -122,7 +123,7 @@ module RedisIndex
       all = self.find(:all)
       sql_time = Time.now - start_time
       redis_start_time, printy, total =Time.now, 0, all.count - 1
-      RedisIndex.redis.multi do
+      Queris.redis.multi do
         all.each_with_index do |row, i|
           if printy == i
             print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
@@ -136,7 +137,7 @@ module RedisIndex
       #update all foreign indices
       foreign = 0
       redis_indices.each do |index|
-        if index.kind_of? RedisIndex::ForeignIndex
+        if index.kind_of? Queris::ForeignIndex
           foreign+=1
           index.real_index.model.send :build_redis_indices 
         end
@@ -151,10 +152,10 @@ module RedisIndex
     
     def find_cached(id)
       key = cache_key id
-      if marshaled = RedisIndex.redis.get(key)
+      if marshaled = Queris.redis.get(key)
         Marshal.load marshaled
       elsif (found = find id)
-        RedisIndex.redis.set key, Marshal.dump(found)
+        Queris.redis.set key, Marshal.dump(found)
         found
       end
     end
@@ -167,8 +168,8 @@ module RedisIndex
   end
   
   def uncache
-    RedisIndex.redis.del self.class.cache_key(id)
+    Queris.redis.del self.class.cache_key(id)
   end
 end
 
-require "redis_index/mixin/active_record"
+require "queris/mixin/active_record"
