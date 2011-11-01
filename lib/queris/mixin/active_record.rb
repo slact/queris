@@ -1,16 +1,20 @@
 module Queris
   
   module ActiveRecordMixin
-    def self.included(base)
+    def self.included base
+      puts "mixing in AR stuff"
       base.after_create :create_redis_indices
       base.before_save :update_redis_indices, :uncache
       base.before_destroy :delete_redis_indices, :uncache
       base.extend ActiveRecordMixin
     end
-    def redis_query (arg={})
+    def redis_query(arg={})
       query = ActiveRecordQuery.new arg.merge(:model => self)
       yield query if block_given?
       query
+    end
+    def find_all
+      find :all
     end
   end
   

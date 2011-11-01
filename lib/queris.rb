@@ -17,7 +17,9 @@ module Queris
       @redis.flushdb
       puts "Redis db flushed."
     end
-    Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
+    if Rails && Rails.root #if we're in rails
+      Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
+    end
     @indexed_models.each{|m| m.build_redis_indices false}
     printf "All redis indices rebuilt in %.2f sec.\r\n", Time.now-start
     self
@@ -50,17 +52,21 @@ module Queris
           @redis_indices||=[]
           @redis_indices.push index
         end
-        def redis_prefix
-          @redis_prefix||="Rails:#{Rails.application.class.parent.to_s}:#{self.name}:"
+        def redis_prefix (app_name=nil)
+          if @redis_prefix.nil? || !app_name.nil?
+            if Rails
+              @redis_prefix="Rails:#{app_name || Rails.application.class.parent.to_s}:#{self.name}:"
+            else
+              @redis_prefix="#{app_name && "#{app_name}:"}#{self.name}:"
+            end
+          else
+            @redis_prefix
+          end
         end
         include ObjectMixin
       end
     end
-    puts ActiveRecord
-    puts base.superclass == ActiveRecord::Base
-    puts "wHOA"
     if ActiveRecord and base.superclass == ActiveRecord::Base then
-      puts "about to extend AR"
       require "queris/mixin/active_record"
       base.send :include, ActiveRecordMixin
     end
@@ -85,7 +91,7 @@ module Queris
       arg[:model].send :index_attribute, arg.merge(:index=> Queris::ForeignIndex, :real_index => index)
     end
 
-    def index_attribute_from(arg) #doesn't work yet.
+    def index_attribute_from(arg) 
       model = arg[:model]
       model.send(:include, Queris) unless model.include? Queris
       model.send(:index_attribute_for, arg.merge(:model => self))
@@ -110,18 +116,20 @@ module Queris
       self
     end
 
+    def query(arg={})
+      redis_query arg
+    end
+      
     def redis_query (arg={})
       query = Queris::Query.new arg.merge(:model => self)
       yield query if block_given?
       query
     end
-
-    alias_method :query, :redis_query unless self.respond_to? :query
     
     def build_redis_indices(build_foreign = true)
       start_time = Time.now
-      all = self.find(:all)
-      sql_time = Time.now - start_time
+      all = self.find_all
+      fetch_time = Time.now - start_time
       redis_start_time, printy, total =Time.now, 0, all.count - 1
       Queris.redis.multi do
         all.each_with_index do |row, i|
@@ -133,7 +141,7 @@ module Queris
         end
         print "\rBuilt all native indices for #{self.name}. Committing to redis..."
       end
-      print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{sql_time.round 3} sec. for SQL).\r\n"
+      print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
       #update all foreign indices
       foreign = 0
       redis_indices.each do |index|
@@ -154,7 +162,7 @@ module Queris
       key = cache_key id
       if marshaled = Queris.redis.get(key)
         Marshal.load marshaled
-      elsif (found = find id)
+      elsif (found = find id) #ActiveRecord-like call. Doesn't belong here.
         Queris.redis.set key, Marshal.dump(found)
         found
       end
@@ -171,5 +179,3 @@ module Queris
     Queris.redis.del self.class.cache_key(id)
   end
 end
-
-require "queris/mixin/active_record"
