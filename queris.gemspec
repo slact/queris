@@ -6,10 +6,10 @@ Gem::Specification.new do |s|
   s.name        = "queris"
   s.version     = Queris::VERSION
   s.authors     = ["Leo P."]
-  s.email       = ["shell@slact.net"]
+  s.email       = ["queris@slact.net"]
   s.homepage    = ""
-  s.summary     = %q{TODO: Write a gem summary}
-  s.description = %q{TODO: Write a gem description}
+  s.summary     = %q{Redis-backed object indexing and querying module}
+  s.description = %q{We've got indices, foreign indices, ranges, arbitrary numbers of subqueries, and more}
 
   s.rubyforge_project = "queris"
 
