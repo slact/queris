@@ -82,18 +82,7 @@ module Queris
       end
       self
     end
-    
-    def send_command(cmd, temp_set_key, is_first=false)
-      if [:zinterstore, :zunionstore].member? cmd[:command]
-        if is_first
-          @redis.send cmd[:command], temp_set_key, cmd[:key], :weights => cmd[:weight]
-        else
-          @redis.send cmd[:command], temp_set_key, (cmd[:key].kind_of?(Array) ? cmd[:key] : [cmd[:key]]) + [temp_set_key], :weights => (cmd[:weight].kind_of?(Array) ? cmd[:weight] : [cmd[:weight]]) + [0]
-        end
-      else
-        @redis.send cmd[:command], temp_set_key, *cmd[:arg]
-      end
-    end
+
     
     def results(*arg, &block)
       query
@@ -117,11 +106,6 @@ module Queris
       @results_key ||= "#{@redis_prefix}results:" << digest(explain true) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
     end
     
-    def digest(value)
-      #value
-      Digest::SHA1.hexdigest value.to_s
-    end
-    
     def id
       digest results_key
     end
@@ -132,48 +116,7 @@ module Queris
     end
     alias :size :length
     alias :count :length
-    
-    def push_command(*args)
-      if args.first.respond_to? :to_sym
-        cmd, arg =  args.first, args.second
-      else
-        cmd =  args.first[:command]
-        arg = args.first
-      end
-      raise "command must be symbol-like" unless cmd.respond_to? :to_sym
-      cmd = cmd.to_sym
-      if (@queue.length == 0 || @queue.last[:command]!=cmd) || @queue.last[:subquery] || arg[:subquery] || !([:zinterstore, :zunionstore].member? cmd)
-        @queue.push :command => cmd, :key =>[], :weight => []
-      end
-      last = @queue.last
-      
-      unless arg[:key].nil?
-        last[:key] << arg[:key]
-        last[:weight] << arg[:weight] || 0
-      end
-      last[:arg] = arg[:arg]
-      [:subquery, :subquery_id].each do |param|
-        if last[param].kind_of? Enumerable
-          if arg[param].kind_of? Enumerable
-            last[param] += arg[param]
-          else
-            last[param] << val || 0
-          end
-        else
-          last[param] = arg[param]
-        end
-      end
-      self
-    end
-    def push_commands (arr)
-      arr.each {|x| push_command x}
-      self
-    end
-    
-    def build_query_part(command, query, val=nil, multiplier = 1)
-      query.subquery(self) unless query.subquery_id(self)
-      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key => 'NOT_THE_REAL_KEY_AT_ALL', :weight => multiplier }]
-    end
+
     
     def subquery arg={}
       @results_key = nil
@@ -187,34 +130,6 @@ module Queris
     end
     def subquery_id(subquery)
       @subquery.index subquery
-    end
-
-    def push_explanation(operation, index, value)
-      #set operation
-      if !@explanation.empty?
-        case operation
-        when :diff
-          op= "∖ "
-        when :intersect
-          op= "∩ "
-        when :union
-          op= "∪ "
-        end
-      elsif operation == :diff
-        op = "∅ ∖ "
-      else
-        op = ""
-      end
-
-      #index and value
-      if index.kind_of? Query #we take this roundabout route because subqueries can be altered
-        s = "{subquery #{subquery_id index}}"
-      else
-        s = "#{index.name}#{!value.to_s.empty? ? '<' + value.to_s + '>' : nil}"
-      end
-      
-      @explanation << "#{op}#{s}"
-      self
     end
     
     def explain(omit_subqueries=false)
@@ -250,7 +165,7 @@ module Queris
     end
     
     def marshal_load(data)
-      if data.kind_of? String 
+      if data.kind_of? String
         arg = JSON.load(data)
       elsif data.kind_of? Enumerable
         arg = data
@@ -261,6 +176,95 @@ module Queris
         instance_variable_set "@#{n}", v
       end
       @redis ||= redis
+    end
+    
+    private
+    def push_explanation(operation, index, value)
+      #set operation
+      if !@explanation.empty?
+        case operation
+        when :diff
+          op= "∖ "
+        when :intersect
+          op= "∩ "
+        when :union
+          op= "∪ "
+        end
+      elsif operation == :diff
+        op = "∅ ∖ "
+      else
+        op = ""
+      end
+
+      #index and value
+      if index.kind_of? Query #we take this roundabout route because subqueries can be altered
+        s = "{subquery #{subquery_id index}}"
+      else
+        s = "#{index.name}#{!value.to_s.empty? ? '<' + value.to_s + '>' : nil}"
+      end
+      
+      @explanation << "#{op}#{s}"
+      self
+    end
+  
+    def push_command(*args)
+      if args.first.respond_to? :to_sym
+        cmd, arg =  args.first, args.second
+      else
+        cmd =  args.first[:command]
+        arg = args.first
+      end
+      raise "command must be symbol-like" unless cmd.respond_to? :to_sym
+      cmd = cmd.to_sym
+      if (@queue.length == 0 || @queue.last[:command]!=cmd) || @queue.last[:subquery] || arg[:subquery] || !([:zinterstore, :zunionstore].member? cmd)
+        @queue.push :command => cmd, :key =>[], :weight => []
+      end
+      last = @queue.last
+      
+      unless arg[:key].nil?
+        last[:key] << arg[:key]
+        last[:weight] << arg[:weight] || 0
+      end
+      last[:arg] = arg[:arg]
+      [:subquery, :subquery_id].each do |param|
+        if last[param].kind_of? Enumerable
+          if arg[param].kind_of? Enumerable
+            last[param] += arg[param]
+          else
+            last[param] << val || 0
+          end
+        else
+          last[param] = arg[param]
+        end
+      end
+      self
+    end
+    
+    def push_commands (arr)
+      arr.each {|x| push_command x}
+      self
+    end
+    
+    def build_query_part(command, query, val=nil, multiplier = 1)
+      query.subquery(self) unless query.subquery_id(self)
+      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key => 'NOT_THE_REAL_KEY_AT_ALL', :weight => multiplier }]
+    end
+
+    def send_command(cmd, temp_set_key, is_first=false)
+      if [:zinterstore, :zunionstore].member? cmd[:command]
+        if is_first
+          @redis.send cmd[:command], temp_set_key, cmd[:key], :weights => cmd[:weight]
+        else
+          @redis.send cmd[:command], temp_set_key, (cmd[:key].kind_of?(Array) ? cmd[:key] : [cmd[:key]]) + [temp_set_key], :weights => (cmd[:weight].kind_of?(Array) ? cmd[:weight] : [cmd[:weight]]) + [0]
+        end
+      else
+        @redis.send cmd[:command], temp_set_key, *cmd[:arg]
+      end
+    end
+    
+    def digest(value)
+      #value
+      Digest::SHA1.hexdigest value.to_s
     end
   end
 end
