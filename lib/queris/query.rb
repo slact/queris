@@ -6,7 +6,7 @@ module Queris
       @queue, @sort_queue = [], []
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
-      @redis=arg[:redis] || $redis
+      @redis=arg[:redis] || Queris.redis
       @subquery = []
       @ttl ||= arg[:ttl] || 3.minutes
       @created_at = Time.now.utc
