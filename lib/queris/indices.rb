@@ -47,7 +47,7 @@ module Queris
     end
     def delete(obj)
       remove(obj, value_was(obj))
-    end    
+    end
   end
     
   class SearchIndex < Index

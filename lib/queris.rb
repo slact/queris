@@ -9,9 +9,13 @@ require "queris/mixin/object"
 module Queris
   @indexed_models = []
   @redis
+  
+  #shared redis connection
   def self.redis
     @redis || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
   end
+
+  #rebuild all known queris indices
   def self.rebuild!(clear=false)
     start = Time.now
     if clear
