@@ -37,7 +37,7 @@ module Queris
     def index_attribute(arg={}, &block)
       index_class = arg[:index] || Queris::SearchIndex
       raise ArgumentError, "index argument must be in Queris::Index if given" unless index_class <= Queris::Index
-      Queris.add_model self
+      Queris.register_model self
       index_class.new(arg.merge(:model => self), &block)
     end
 

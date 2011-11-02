@@ -25,7 +25,8 @@ module Queris
     printf "All redis indices rebuilt in %.2f sec.\r\n", Time.now-start
     self
   end
-  def self.add_model(model)
+
+  def self.register_model(model)
     @indexed_models << model unless @indexed_models.member? model
   end
   def self.use_redis(redis)
