@@ -2,7 +2,6 @@ module Queris
   
   module ActiveRecordMixin
     def self.included base
-      puts "mixing in AR stuff"
       base.after_create :create_redis_indices
       base.before_save :update_redis_indices, :uncache
       base.before_destroy :delete_redis_indices, :uncache
@@ -73,9 +72,9 @@ module Queris
       super @model.redis_index(index_name, RangeIndex), reverse
     end
     def subquery(arg={})
-      if arg.kind_of? Query
+      if arg.kind_of? Query #adopt a given query as subquery
         raise "Trying to use a subquery from a different model" unless arg.model == model
-      else
+      else #create new subquery
         arg[:model]=model
       end
       super arg
