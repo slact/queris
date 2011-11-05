@@ -19,7 +19,7 @@ module Queris
   def self.rebuild!(clear=false)
     start = Time.now
     if clear
-      @redis.flushdb
+      redis.flushdb
       puts "Redis db flushed."
     end
     if Rails && Rails.root #if we're in rails
