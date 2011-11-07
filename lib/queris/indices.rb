@@ -158,16 +158,6 @@ module Queris
       @redis.zrem sorted_set_key(obj.send @attribute), obj.send(@key)
     end
 
-    private
-    def range(command, query, min=nil, max=nil, exclude_min=nil, exclude_max=nil, range_only=nil, multiplier=1)
-      key, ret = sorted_set_key, []
-      min_param, max_param = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
-      ret << {:command => command, :key => key, :weight => multiplier} unless range_only
-      ret <<  {:command => :zremrangebyscore, :arg => ['-inf', min_param]} unless min.nil?
-      ret << {:command => :zremrangebyscore, :arg => [max_param, 'inf']} unless max.nil?
-      ret
-    end
-
     def build_query_part(command, query, value, multiplier=1)
       case value
       when Range
@@ -183,6 +173,15 @@ module Queris
         end
         ret
       end
+    end
+    private
+    def range(command, query, min=nil, max=nil, exclude_min=nil, exclude_max=nil, range_only=nil, multiplier=1)
+      key, ret = sorted_set_key, []
+      min_param, max_param = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
+      ret << {:command => command, :key => key, :weight => multiplier} unless range_only
+      ret <<  {:command => :zremrangebyscore, :arg => ['-inf', min_param]} unless min.nil?
+      ret << {:command => :zremrangebyscore, :arg => [max_param, 'inf']} unless max.nil?
+      ret
     end
 
   end
