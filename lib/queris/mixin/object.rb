@@ -1,26 +1,36 @@
 module Queris
   module ObjectMixin
     def self.included base
-      base.extend ObjectMixin
+      base.extend self
     end
-    def redis_indices
-      @redis_indices
-    end
-    def redis_index (index_name=nil, index_class = Index)
+
+    def redis_index(index_name=nil, index_class = Index)
       raise ArgumentError, "#{index_class} must be a subclass of Queris::Index" unless index_class <= Index
       case index_name
       when index_class, NilClass, Query
         return index_name
       end
-      @redis_indices||=[] #this line sucks.
-      index = @redis_indices.find { |i| index_name.respond_to?(:to_sym) && i.name == index_name.to_sym && i.kind_of?(index_class)}
-      raise Exception, "Index #{index_name} not found in #{name}" unless index
+      index = (@redis_index_hash or [])[index_name.to_sym]
+      raise "Index #{index_name} not found in #{name}" unless index
+      raise "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
       index
     end
     
+    def redis_indices; @redis_indices or []; end
     def add_redis_index(index)
-      @redis_indices||=[]
+      @redis_indices ||= []
+      @redis_index_hash ||= {}
+      raise "Not an index" unless index.kind_of? Index
+      
+      if (found = @redis_index_hash[index.name])
+        #todo: same-name indices are allowed, but with some caveats.
+        #define and check them here.
+        #raise "Index #{index.name} (#{found.class.name}) already exists. Trying to add #{index.class.name}"
+      end
+      
       @redis_indices.push index
+      @redis_index_hash[index.name.to_sym]=index
+      index
     end
     def redis_prefix (app_name=nil)
       if @redis_prefix.nil? || !app_name.nil?
@@ -44,7 +54,7 @@ module Queris
     def index_attribute_for(arg)
       raise ArgumentError ,"index_attribute_for requires :model argument" unless arg[:model]
       index = index_attribute(arg) do |index|
-        index.name = "foreign_index_#{index.name}"
+        index.name = "foreign_index_#{index.name}".to_sym
       end
       arg[:model].send :index_attribute, arg.merge(:index=> Queris::ForeignIndex, :real_index => index)
     end
@@ -78,8 +88,8 @@ module Queris
       redis_query arg
     end
       
-    def redis_query (arg={})
-      query = Queris::Query.new arg.merge(:model => self)
+    def redis_query(arg={})
+      query = Queris::Query.new model, arg
       yield query if block_given?
       query
     end

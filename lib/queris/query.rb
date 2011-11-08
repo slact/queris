@@ -1,8 +1,16 @@
 # encoding: utf-8
 module Queris
   class Query
-    attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name
-    def initialize(arg)
+    attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name, :model, :params
+    def initialize(model, arg=nil)
+      if model.kind_of?(Hash) and arg.nil?
+        arg, model = model, model[:model]
+      elsif arg.nil?
+        arg= {}
+      end
+      raise "include Queris in your model (#{model.inspect})." unless model.include? Queris
+      @model = model
+      @params = {}
       @queue, @sort_queue = [], []
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
@@ -13,19 +21,30 @@ module Queris
       self
     end
     
-    def union(index, val)
+    #retrieve query parameters, as fed through union and intersect and diff
+    def param(param_name)
+      @params[param_name.to_sym]
+    end
+    
+    def union(index, val=nil)
+      index = check_index index  #accept string index names and indices and queries
+      set_param_from_index index, val
       @results_key = nil
       push_commands index.build_query_part(:zunionstore, self, val, 1)
       push_explanation :union, index, val.to_s
     end
     
-    def intersect(index, val)
+    def intersect(index, val=nil)
+      index = check_index index  #accept string index names and indices and queries
+      set_param_from_index index, val
       @results_key = nil
       push_commands index.build_query_part(:zinterstore, self, val, 1)
       push_explanation :intersect, index, val.to_s
     end
     
-    def diff(index, val)
+    def diff(index, val=nil)
+      index = check_index(index) #accept string index names and indices and queries
+      set_param_from_index index, val
       @results_key = nil
       if val.kind_of?(Range) && index.kind_of?(RangeIndex) #this doubtfully belongs here. But our Sorted Set diff is a bit of a hack anyway, so...
         sub = subquery.union(index, val)
@@ -38,11 +57,26 @@ module Queris
     end
     
     def sort(index, reverse = nil)
-      @results_key = nil
+      # accept a minus sign in front of index name to mean reverse
+      if index.kind_of?(Query)
+        raise "sort can be extracted only from query using the same model..." unless index.model == model
+        sort_query = index
+        if sort_query.sorting_by.nil?
+          index = nil
+        else
+          index = sort_query.sort_index_name
+          sort_query.sort nil #unsort sorted query
+        end
+      end
+      if index.respond_to?('[]') && index[0] == '-'
+        reverse, index = true, index[1..-1]
+      end
       if index.nil?
         @sort_queue = []
         @sort_index_name = nil
       else
+        index = check_index index, RangeIndex #accept string index names and indices and queries
+        @results_key = nil
         @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
         @sort_index_name = "#{reverse ? '-' : ''}#{index.name}".to_sym
       end
@@ -123,7 +157,7 @@ module Queris
       if arg.kind_of? Query
         subq = arg
       else
-        subq = self.class.new(arg.merge :redis_prefix => redis_prefix, :ttl => @ttl)
+        subq = self.class.new((arg[:model] or self), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
       end
       @subquery << subq
       @subquery.last
@@ -175,10 +209,29 @@ module Queris
       arg.each do |n,v|
         instance_variable_set "@#{n}", v
       end
-      @redis ||= redis
+      @redis ||= Queris.redis
+    end
+
+    def build_query_part(command, query, val=nil, multiplier = 1)
+      query.subquery(self) unless query.subquery_id(self)
+      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key => 'NOT_THE_REAL_KEY_AT_ALL', :weight => multiplier }]
+    end
+
+    private
+    def check_index *arg
+      if (res=@model.redis_index(*arg)).nil?
+        raise ArgumentError, "Invalid Queris index (#{arg.inspect}) passed to query. May be a string (index name), an index, or a query."
+      else
+        res
+      end
     end
     
-    private
+    def set_param_from_index(index, val)
+      index = check_index index
+      @params[index.name]=val if index.respond_to? :name
+      val
+    end
+    
     def push_explanation(operation, index, value)
       #set operation
       if !@explanation.empty?
@@ -243,11 +296,6 @@ module Queris
     def push_commands (arr)
       arr.each {|x| push_command x}
       self
-    end
-    
-    def build_query_part(command, query, val=nil, multiplier = 1)
-      query.subquery(self) unless query.subquery_id(self)
-      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key => 'NOT_THE_REAL_KEY_AT_ALL', :weight => multiplier }]
     end
 
     def send_command(cmd, temp_set_key, is_first=false)
