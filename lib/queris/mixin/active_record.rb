@@ -33,9 +33,25 @@ module Queris
     end
 
     def results(*arg)
-      super(*arg) do |id|
-        @model.find_cached id
+      query_ids = {}
+      res = super(*arg)
+      puts res.count
+      res.each_with_index do |id, i|
+        print "id:#{id},i:#{i}\r\n"
+        if(cached = @model.find_cached id).nil?
+          query_ids[id.to_i]=i
+        else
+          res[i]=cached
+        end
       end
+      sql_res = @model.find(query_ids.keys)
+      puts sql_res.count
+      sql_res.each do |found|
+        res[query_ids[found.id]]=found
+        @model.cache_result found.id, found
+      end
+      puts res.count
+      res
     end
 
     def subquery(arg={})

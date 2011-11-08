@@ -126,13 +126,18 @@ module Queris
       "#{redis_prefix}#{id}:cached"
     end
     
+    def cache_result(id, res, expire=nil)
+      key = cache_key id
+      Queris.redis.set key, Marshal.dump(res)
+      if expire
+        Queris.redis.expire key, expire
+      end
+    end
+    
     def find_cached(id)
       key = cache_key id
       if marshaled = Queris.redis.get(key)
         Marshal.load marshaled
-      elsif (found = find id) #ActiveRecord-like call. Doesn't belong here.
-        Queris.redis.set key, Marshal.dump(found)
-        found
       end
     end
   end
