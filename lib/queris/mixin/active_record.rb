@@ -3,8 +3,8 @@ module Queris
   module ActiveRecordMixin
     def self.included base
       base.after_create :create_redis_indices
-      base.before_save :update_redis_indices, :uncache
-      base.before_destroy :delete_redis_indices, :uncache
+      base.before_save :update_redis_indices, :maybe_uncache_result
+      base.before_destroy :delete_redis_indices, :uncache_result
       base.extend ActiveRecordMixin
     end
     def redis_query(arg={})
@@ -15,6 +15,56 @@ module Queris
     def find_all
       find :all
     end
+    def ignore_attributes_for_results_cache *arg
+      @ignored_attributes_for_cache||=[]
+      if arg.count == 0
+        @ignored_attributes_for_cache
+      else
+        @ignored_attributes_for_cache += arg.map{|x| x.to_s}
+        arg.each do |attr_name|
+          @ignored_attributes_for_cache
+        end
+      end
+    end
+    def expire_result_cache ttl=nil
+      if ttl.nil?
+        @result_cache_ttl
+      else
+        @result_cache_ttl = ttl
+      end
+    end
+    
+    def cache_key(id)
+    "#{self.redis_prefix}#{id}:cached"
+    end
+    
+    def cache_result(id, res, expire=nil)
+      key = self.cache_key id
+      Queris.redis.set key, Marshal.dump(res)
+      if expire = expire_result_cache
+        Queris.redis.expire key, expire
+      end
+      res
+    end
+    def uncache_result
+      Queris.redis.del self.class.cache_key(self.id)
+    end
+    
+    def find_cached(id, cache_it=true)
+      key = cache_key id
+      if marshaled = Queris.redis.get(key)
+        res = Marshal.load marshaled
+      elsif cache_it
+        cache_result id, find(id)
+      end
+    end
+    
+    def maybe_uncache_result
+      if (self.changed - (self.class.ignore_attributes_for_results_cache || [])).count > 0
+        uncache_result
+      end
+    end
+    
   end
   
   class ActiveRecordQuery < Query
@@ -35,22 +85,18 @@ module Queris
     def results(*arg)
       query_ids = {}
       res = super(*arg)
-      puts res.count
       res.each_with_index do |id, i|
-        print "id:#{id},i:#{i}\r\n"
-        if(cached = @model.find_cached id).nil?
+        if(cached = @model.find_cached id, false).nil?
           query_ids[id.to_i]=i
         else
           res[i]=cached
         end
       end
       sql_res = @model.find(query_ids.keys)
-      puts sql_res.count
       sql_res.each do |found|
         res[query_ids[found.id]]=found
         @model.cache_result found.id, found
       end
-      puts res.count
       res
     end
 
@@ -62,5 +108,6 @@ module Queris
       end
       super arg
     end
+
   end
 end

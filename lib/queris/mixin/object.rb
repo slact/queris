@@ -121,24 +121,5 @@ module Queris
       puts "Built #{redis_indices.count} ind#{redis_indices.index.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
       self
     end
-      
-    def cache_key(id)
-      "#{redis_prefix}#{id}:cached"
-    end
-    
-    def cache_result(id, res, expire=nil)
-      key = cache_key id
-      Queris.redis.set key, Marshal.dump(res)
-      if expire
-        Queris.redis.expire key, expire
-      end
-    end
-    
-    def find_cached(id)
-      key = cache_key id
-      if marshaled = Queris.redis.get(key)
-        Marshal.load marshaled
-      end
-    end
   end
 end

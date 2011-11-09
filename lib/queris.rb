@@ -50,8 +50,4 @@ module Queris
       self.class.redis_indices.each { |index| index.send op, self}
     end
   end
-  
-  def uncache
-    Queris.redis.del self.class.cache_key(id)
-  end
 end
