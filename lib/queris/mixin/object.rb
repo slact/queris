@@ -34,11 +34,7 @@ module Queris
     end
     def redis_prefix (app_name=nil)
       if @redis_prefix.nil? || !app_name.nil?
-        if Rails
-          @redis_prefix="Rails:#{app_name || Rails.application.class.parent.to_s}:#{self.name}:"
-        else
-          @redis_prefix="#{app_name && "#{app_name}:"}#{self.name}:"
-        end
+        @redis_prefix = "#{Queris.redis_prefix(app_name)}#{self.name}:"
       else
         @redis_prefix
       end

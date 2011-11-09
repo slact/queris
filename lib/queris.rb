@@ -18,14 +18,17 @@ module Queris
   #rebuild all known queris indices
   def self.rebuild!(clear=false)
     start = Time.now
-    if clear
-      redis.flushdb
-      puts "Redis db flushed."
-    end
     if Rails && Rails.root #if we're in rails
       Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
     end
-    @indexed_models.each{|m| m.build_redis_indices false}
+    @indexed_models.each do |model| 
+      if clear
+        delkeys = redis.keys "#{model.redis_prefix}*"
+        deleted = redis.del(*delkeys) unless delkeys.count == 0
+        puts "Deleted #{delkeys.count} #{self.name} keys for #{model.name}."
+      end
+      model.build_redis_indices false
+    end
     printf "All redis indices rebuilt in %.2f sec.\r\n", Time.now-start
     self
   end
@@ -42,6 +45,14 @@ module Queris
     if ActiveRecord and base.superclass == ActiveRecord::Base then
       require "queris/mixin/active_record"
       base.send :include, ActiveRecordMixin
+    end
+  end
+  
+  def self.redis_prefix(app_name=nil)
+    if Rails
+      "Rails:#{app_name || Rails.application.class.parent.to_s}:#{self.name}:"
+    else
+      "#{app_name && "#{app_name}:"}#{self.name}:"
     end
   end
   
