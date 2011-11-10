@@ -55,7 +55,12 @@ module Queris
       if marshaled = Queris.redis.get(key)
         res = Marshal.load marshaled
       elsif cache_it
-        cache_result id, find(id)
+        begin
+          res = find(id)
+        rescue
+          res = nil
+        end
+        cache_result id, res if res
       end
     end
     
