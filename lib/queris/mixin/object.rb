@@ -85,7 +85,7 @@ module Queris
     end
       
     def redis_query(arg={})
-      query = Queris::Query.new model, arg
+      query = Queris::Query.new self, arg
       yield query if block_given?
       query
     end

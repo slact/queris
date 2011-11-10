@@ -79,7 +79,7 @@ module Queris
       unless model.kind_of?(Class) && model < ActiveRecord::Base
         raise ArgumentError, ":model arg must be an ActiveRecord model, got #{model.respond_to?(:superclass) ? model.superclass.name : model} instead."
       end
-      super model, arg.merge(:prefix => model.redis_prefix)
+      super model, arg
     end
 
     def results(*arg)

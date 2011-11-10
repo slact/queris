@@ -13,7 +13,7 @@ module Queris
       @params = {}
       @queue, @sort_queue = [], []
       @explanation = []
-      @redis_prefix = (arg[:prefix] || arg[:redis_prefix]) + self.class.name + ":"
+      @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.redis
       @subquery = []
       @ttl ||= arg[:ttl] || 3.minutes
@@ -157,7 +157,7 @@ module Queris
       if arg.kind_of? Query
         subq = arg
       else
-        subq = self.class.new((arg[:model] or self), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
+        subq = self.class.new((arg[:model] or model), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
       end
       @subquery << subq
       @subquery.last
