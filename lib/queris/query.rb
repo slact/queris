@@ -14,7 +14,7 @@ module Queris
       @queue, @sort_queue = [], []
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
-      @redis=arg[:redis] || Queris.redis
+      @redis=arg[:redis] || Queris.query_redis
       @subquery = []
       @ttl ||= arg[:ttl] || 3.minutes
       @created_at = Time.now.utc
@@ -209,7 +209,7 @@ module Queris
       arg.each do |n,v|
         instance_variable_set "@#{n}", v
       end
-      @redis ||= Queris.redis
+      @redis ||= Queris.query_redis
     end
 
     def build_query_part(command, query, val=nil, multiplier = 1)

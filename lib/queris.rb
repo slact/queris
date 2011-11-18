@@ -9,12 +9,20 @@ require "queris/mixin/object"
 module Queris
   @indexed_models = []
   @redis
+  @query_redis=[]
   
   #shared redis connection
   def self.redis
     @redis || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
   end
 
+  def self.query_redis
+    unless @query_redis.nil? or @query_redis.empty?
+      @query_redis[rand @query_redis.length]
+    else
+      redis
+    end
+  end
   #rebuild all known queris indices
   def self.rebuild!(clear=false)
     start = Time.now
@@ -33,13 +41,23 @@ module Queris
     self
   end
 
+  def self.all_redises
+    (@query_redis + [@redis]).unique
+  end
+  
   def self.register_model(model)
     @indexed_models << model unless @indexed_models.member? model
   end
-  def self.use_redis(redis)
+  def self.use_redis(redis, opt={})
+    @query_redis << redis unless opt[:nocache]
     @redis=redis
   end
-  
+  def self.use_query_redis(*args)
+    args.delete_if {|arg| not arg.kind_of? Redis}.each do |arg|
+      @query_redis << arg
+    end
+  end
+
   def self.included(base)
     base.send :include, ObjectMixin
     if ActiveRecord and base.superclass == ActiveRecord::Base then
