@@ -75,7 +75,10 @@ module Queris
         @sort_queue = []
         @sort_index_name = nil
       else
-        index = check_index index, RangeIndex #accept string index names and indices and queries
+        index = check_index index #accept string index names and indices and queries
+        if not index.kind_of? ForeignIndex
+          raise Exception, "Must have a RangeIndex for sorting" unless index.kind_of? RangeIndex
+        end
         @results_key = nil
         @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
         @sort_index_name = "#{reverse ? '-' : ''}#{index.name}".to_sym
@@ -88,6 +91,11 @@ module Queris
     end
     def sorting_by
       @sort_index_name
+    end
+    
+    def resort #apply a sort to set of existing results
+      @resort=true
+      self
     end
     
     def query(force=nil)
@@ -113,6 +121,10 @@ module Queris
           @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
           @redis.expire results_key, @ttl
         end
+      elsif @resort #just sort
+        @sort_queue.each do |cmd|
+          send_command cmd, results_key
+        end
       end
       self
     end
@@ -134,6 +146,15 @@ module Queris
         res.map!(&block)
       end
       res
+    end
+    
+    def first_result
+      res = results(0...1)
+      if res.length > 0 
+        res.first
+      else
+        nil
+      end
     end
     
     def results_key

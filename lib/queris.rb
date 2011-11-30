@@ -42,7 +42,7 @@ module Queris
   end
 
   def self.all_redises
-    (@query_redis + [@redis]).unique
+    ([redis] + @query_redis).uniq
   end
   
   def self.register_model(model)
@@ -76,7 +76,9 @@ module Queris
   
   [:create, :update, :delete].each do |op|
     define_method "#{op}_redis_indices" do
-      self.class.redis_indices.each { |index| index.send op, self}
+      self.class.redis_indices.each do |index|
+        index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+      end
     end
   end
 end

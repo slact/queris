@@ -3,8 +3,8 @@ module Queris
   module ActiveRecordMixin
     def self.included base
       base.after_create :create_redis_indices
-      base.before_save :update_redis_indices, :maybe_uncache_result
-      base.before_destroy :delete_redis_indices, :uncache_result
+      base.before_save :update_redis_indices
+      base.before_destroy :delete_redis_indices
       base.extend ActiveRecordMixin
     end
     def redis_query(arg={})
@@ -15,59 +15,33 @@ module Queris
     def find_all
       find :all
     end
-    def ignore_attributes_for_results_cache *arg
-      @ignored_attributes_for_cache||=[]
-      if arg.count == 0
-        @ignored_attributes_for_cache
-      else
-        @ignored_attributes_for_cache += arg.map{|x| x.to_s}
-        arg.each do |attr_name|
-          @ignored_attributes_for_cache
-        end
-      end
-    end
-    def expire_result_cache ttl=nil
-      if ttl.nil?
-        @result_cache_ttl
-      else
-        @result_cache_ttl = ttl
-      end
-    end
     
-    def cache_key(id)
-    "#{self.redis_prefix}#{id}:cached"
-    end
-    
-    def cache_result(id, res, expire=nil)
-      key = self.cache_key id
-      Queris.redis.set key, Marshal.dump(res)
-      if expire = expire_result_cache
-        Queris.redis.expire key, expire
-      end
-      res
-    end
-    def uncache_result
-      Queris.redis.del self.class.cache_key(self.id)
+    def cache_all_attributes
+      Queris.register_model self
+      Queris::HashCache.new :model => self
     end
     
     def find_cached(id, cache_it=true)
-      key = cache_key id
-      if marshaled = Queris.redis.get(key)
-        res = Marshal.load marshaled
+      cache = redis_index("all_attribute_hashcache", Queris::HashCache)
+      if (obj = cache.fetch(id))
+        return obj
       elsif cache_it
         begin
-          res = find(id)
+          obj = find(id)
         rescue
-          res = nil
+          obj = nil
         end
-        cache_result id, res if res
+        cache.create obj if obj
+        obj
       end
     end
     
-    def maybe_uncache_result
-      if (self.changed - (self.class.ignore_attributes_for_results_cache || [])).count > 0
-        uncache_result
-      end
+    def all_cacheable_attributes
+      attribute_names
+    end
+    
+    def changed_cacheable_attributes
+      changed
     end
     
   end
@@ -91,16 +65,11 @@ module Queris
       query_ids = {}
       res = super(*arg)
       res.each_with_index do |id, i|
-        if(cached = @model.find_cached id, false).nil?
+        if(cached = @model.find_cached id).nil?
           query_ids[id.to_i]=i
         else
           res[i]=cached
         end
-      end
-      sql_res = @model.find(query_ids.keys)
-      sql_res.each do |found|
-        res[query_ids[found.id]]=found
-        @model.cache_result found.id, found
       end
       res
     end

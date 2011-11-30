@@ -49,7 +49,84 @@ module Queris
       remove(obj, value_was(obj))
     end
   end
+  
+  class HashCache < Index
+    def initialize(arg={})
+      
+      @name= "#{arg[:attribute] || "all_attribute"}_hashcache"
+      super arg
+      @attribute= arg[:attribute]
+      raise Exception, "Model not passed to index." unless @model
+      @name=@model.to_s #whatever, name's not important.
+    end
     
+    #don't add this index to the list of indices to be built when calling Queris.rebuild!
+    def self.skip_create?; true; end
+    
+    def hash_key(obj)
+      id = obj.kind_of?(@model) ? obj.send(@key) : obj
+      (@keyf) %[@redis_prefix || @model.redis_prefix, id]
+    end
+    
+    def update(obj)
+      changed_attrs = obj.changed_cacheable_attributes.reject{|name| obj.send(name).nil?}
+      if @attribute.nil?
+        cache_attributes obj, changed_attrs unless changed_attrs.length == 0
+      elsif changed_attrs.member? @attribute
+        cache_attributes obj, @attribute => send(@attribute)
+      end
+    end
+    def create(obj)
+      if @attriute.nil?
+        cache_attributes obj, obj.all_cacheable_attributes
+      elsif not (attr_val=obj.call(@attribute)).nil?
+        cache_attributes obj, @attribute => send(@attribute)
+      end
+      
+    end
+    
+    def delete(obj)
+      Queris.redis.del hash_key obj
+    end
+    
+    def fetch(id)
+      if @attribute.nil?
+        hash = Queris.redis.hgetall hash_key id
+        @cached_attr_count ||= (not @attribute.nil?) ? 1 : @model.new.all_cacheable_attributes.length #this line could be a problem if more cacheable attributes are added after the first fetch.
+        if hash.length >= @cached_attr_count
+          unmarshaled = {}
+          hash.each_with_index do |v|
+            unmarshaled[v.first.to_sym]=Marshal.load v.last
+          end 
+          obj= @model.new
+          obj.assign_attributes(unmarshaled, :without_protection => true)
+          obj.instance_eval do
+            @new_record= false 
+            @changed_attributes={}
+          end
+          obj
+        else
+          nil
+        end
+      else
+        return Queris.redis.hget hash_key(id), @attribute
+      end
+    end
+    
+    alias :load :fetch
+      
+    private 
+    def cache_attributes(obj, attrs)
+      key = hash_key obj
+      marshaled = {}
+      attrs.each do |v|
+        marshaled[v]=Marshal.dump obj.send(v)
+      end
+      Queris.redis.mapped_hmset key, marshaled
+    end
+    
+  end
+  
   class SearchIndex < Index
     def initialize(arg={})
       super arg
@@ -101,12 +178,13 @@ module Queris
     def set_key(*arg)
       @real_index.set_key(*arg)
     end
+    def build_query_part(*arg)
+      @real_index.build_query_part *arg
+    end
     def method_missing(method)
       @real_index.method
     end
   end
-  
-  
   
   class PresenceIndex < SearchIndex
     def initialize(arg)

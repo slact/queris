@@ -4,20 +4,22 @@ module Queris
       base.extend self
     end
 
-    def redis_index(index_name=nil, index_class = Index)
+    def redis_index(index_match=nil, index_class = Index)
       raise ArgumentError, "#{index_class} must be a subclass of Queris::Index" unless index_class <= Index
-      case index_name
+      case index_match
       when index_class, NilClass, Query
-        return index_name
+        return index_match
+      when String
+        index_match = index_match.to_sym
       end
-      index = (@redis_index_hash or [])[index_name.to_sym]
-      raise "Index #{index_name} not found in #{name}" unless index
+      index = (@redis_index_hash or [])[index_match]
+      raise "Index #{index_match} not found in #{name}" unless index
       raise "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
       index
     end
     
     def redis_indices; @redis_indices or []; end
-    def add_redis_index(index)
+    def add_redis_index(index, opt={})
       @redis_indices ||= []
       @redis_index_hash ||= {}
       raise "Not an index" unless index.kind_of? Index
@@ -30,6 +32,7 @@ module Queris
       
       @redis_indices.push index
       @redis_index_hash[index.name.to_sym]=index
+      @redis_index_hash[index.class]=index
       index
     end
     def redis_prefix (app_name=nil)
@@ -80,6 +83,20 @@ module Queris
       self
     end
 
+    def cache_attribute(attribute_name)
+      Queris.register_model self
+      Queris::HashCache.new :model => self, :attribute => attribute_name
+    end
+    
+    def cache_attribute_from(arg)
+      arg[:index]=Queris::HashCache
+      index_attribute_from arg
+    end
+    
+    def get_cached_attribute(attr_name)
+      redis_index(attr_name, Queris::HashCache).fetch id
+    end
+    
     def query(arg={})
       redis_query arg
     end
