@@ -62,13 +62,11 @@ module Queris
     end
 
     def results(*arg)
-      query_ids = {}
-      res = super(*arg)
-      res.each_with_index do |id, i|
-        if(cached = @model.find_cached id).nil?
-          query_ids[id.to_i]=i
-        else
-          res[i]=cached
+      res_ids = super(*arg)
+      res = []
+      res_ids.each_with_index do |id, i|
+        unless (cached = @model.find_cached id).nil?
+          res << cached
         end
       end
       res
