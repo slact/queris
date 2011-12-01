@@ -69,7 +69,7 @@ module Queris
     end
     
     def update(obj)
-      changed_attrs = obj.changed_cacheable_attributes.reject{|name| obj.send(name).nil?}
+      changed_attrs = obj.changed_cacheable_attributes
       if @attribute.nil?
         cache_attributes obj, changed_attrs unless changed_attrs.length == 0
       elsif changed_attrs.member? @attribute
