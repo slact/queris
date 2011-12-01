@@ -107,7 +107,11 @@ module Queris
       query
     end
     
-    def build_redis_indices(build_foreign = true)
+    def build_redis_index(index_name)
+      build_redis_indices(true, [ redis_index(index_name) ])
+    end
+    
+    def build_redis_indices(build_foreign = true, indices=nil)
       start_time = Time.now
       all = self.find_all
       fetch_time = Time.now - start_time
@@ -118,14 +122,14 @@ module Queris
             print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
             printy += (total * 0.05).round
           end
-          row.create_redis_indices 
+          row.create_redis_indices indices
         end
         print "\rBuilt all native indices for #{self.name}. Committing to redis..."
       end
       print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
       #update all foreign indices
       foreign = 0
-      redis_indices.each do |index|
+      (indices || redis_indices).each do |index|
         if index.kind_of? Queris::ForeignIndex
           foreign+=1
           index.real_index.model.send :build_redis_indices 

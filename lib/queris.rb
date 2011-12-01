@@ -75,8 +75,8 @@ module Queris
   end
   
   [:create, :update, :delete].each do |op|
-    define_method "#{op}_redis_indices" do
-      self.class.redis_indices.each do |index|
+    define_method "#{op}_redis_indices" do |indices=nil|
+      (indices || self.class.redis_indices).each do |index|
         index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
       end
     end
