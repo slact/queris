@@ -93,19 +93,23 @@ module Queris
       if @attribute.nil?
         hash = Queris.redis.hgetall hash_key id
         @cached_attr_count ||= (not @attribute.nil?) ? 1 : @model.new.all_cacheable_attributes.length #this line could be a problem if more cacheable attributes are added after the first fetch.
-        if hash.length >= @cached_attr_count
-          unmarshaled = {}
-          hash.each_with_index do |v|
-            unmarshaled[v.first.to_sym]=Marshal.load v.last
-          end 
-          obj= @model.new
-          obj.assign_attributes(unmarshaled, :without_protection => true)
-          obj.instance_eval do
-            @new_record= false 
-            @changed_attributes={}
+        begin
+          if hash.length >= @cached_attr_count
+            unmarshaled = {}
+            hash.each_with_index do |v|
+              unmarshaled[v.first.to_sym]=Marshal.load v.last
+            end
+            obj= @model.new
+            obj.assign_attributes(unmarshaled, :without_protection => true)
+            obj.instance_eval do
+              @new_record= false 
+              @changed_attributes={}
+            end
+            obj
+          else
+            nil
           end
-          obj
-        else
+        rescue ActiveRecord::UnknownAttributeError
           nil
         end
       else
