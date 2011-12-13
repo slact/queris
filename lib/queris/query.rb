@@ -18,7 +18,31 @@ module Queris
       @subquery = []
       @ttl ||= arg[:ttl] || 3.minutes
       @created_at = Time.now.utc
+      @track_stats = arg[:track_stats]
+      @check_staleness = arg[:check_staleness]
       self
+    end
+    
+    def track_stats?
+      @track_stats
+    end
+    
+    def stats_key
+      "#{@redis_prefix}:stats:#{digest explain}"
+    end
+    
+    def time_cached
+      Time.at (@redis.hget(stats_key, 'time_cached').to_f || 0)
+    end
+    
+    def is_stale?
+      if @check_staleness.kind_of? Proc
+        stale = @check_staleness.call self
+      end
+    end
+    
+    def time_cached=(val)
+      @redis.hset stats_key, 'time_cached', val.to_f
     end
     
     #retrieve query parameters, as fed through union and intersect and diff
@@ -98,10 +122,16 @@ module Queris
       self
     end
     
-    def query(force=nil)
+    def query(force=nil, opt={})
       #puts "QUERYING #{results_key}"
-      if force || !@redis.exists(results_key)
-        @subquery.each { |q| q.query force }
+      force||= is_stale?
+      if !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
+        #do nohing, we're using a results key directly
+        time_cached=Time.now if track_stats?
+      elsif force || !@redis.exists(results_key)
+        @subquery.each do |q|
+          q.query force unless opt[:use_cached_subqueries]
+        end
         temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
         @redis.multi do
           [@queue, @sort_queue].each do |queue|
@@ -120,6 +150,7 @@ module Queris
           end
           @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
           @redis.expire results_key, @ttl
+          time_cached=Time.now if track_stats? 
         end
       elsif @resort #just sort
         @sort_queue.each do |cmd|
@@ -129,7 +160,6 @@ module Queris
       self
     end
 
-    
     def results(*arg, &block)
       query
       if arg.last == :reverse
@@ -309,7 +339,7 @@ module Queris
       if args.first.respond_to? :to_sym
         cmd, arg =  args.first, args.second
       else
-        cmd =  args.first[:command]
+        cmd = args.first[:command]
         arg = args.first
       end
       raise "command must be symbol-like" unless cmd.respond_to? :to_sym
