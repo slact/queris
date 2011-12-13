@@ -136,16 +136,31 @@ module Queris
         reverse = true
         arg.shift
       end
-      if arg.first && arg.first.kind_of?(Range)
-        first, last = arg.first.begin, arg.first.end - (arg.first.exclude_end? ? 1 : 0)
+      key = results_key
+      if @redis.type(key) == 'set'
+        res = @redis.smembers key
+        raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." unless arg.empty?
       else
-        first, last = arg.first.to_i, (arg.second || -1).to_i
+        if arg.first && arg.first.kind_of?(Range)
+          first, last = arg.first.begin, arg.first.end - (arg.first.exclude_end? ? 1 : 0)
+        else
+          first, last = arg.first.to_i, (arg.second || -1).to_i
+        end
+        res = reverse ? @redis.zrange(key, first, last) : @redis.zrevrange(key, first, last)
       end
-      res = reverse ? @redis.zrange(results_key, first, last) : @redis.zrevrange(results_key, first, last)
       if block_given?
         res.map!(&block)
       end
       res
+    end
+    
+    def contains?(id)
+      query
+      if @redis.type(key) == 'set'
+        @redis.sismember(results_key, id)
+      else
+        @redis.zrank(results_key, id).nil?
+      end
     end
     
     def first_result
@@ -158,7 +173,11 @@ module Queris
     end
     
     def results_key
-      @results_key ||= "#{@redis_prefix}results:" << digest(explain true) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
+      if !@queue.empty? && @sort_queue.empty? && @queue.first[:key].length == 1 && [:sunionstore, :sinterstore, :zunionstore, :zinterstore].member?(@queue.first[:command]) && (reused_set_key = @queue.first[:key].first) && @redis.type(reused_set_key)=='set'
+        @queue.first[:key].first
+      else
+        @results_key ||= "#{@redis_prefix}results:" << digest(explain true) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
+      end
     end
     
     def id
@@ -167,7 +186,12 @@ module Queris
     
     def length
       query
-      @redis.zcard results_key
+      key = results_key
+      if @redis.type(key) == 'set'
+        @redis.scard key
+      else #not a set. assume it's a sorted set
+        @redis.zcard key
+      end
     end
     alias :size :length
     alias :count :length
