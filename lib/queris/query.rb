@@ -197,10 +197,10 @@ module Queris
     
     def contains?(id)
       query
-      if @redis.type(key) == 'set'
+      if @redis.type(results_key) == 'set'
         @redis.sismember(results_key, id)
       else
-        @redis.zrank(results_key, id).nil?
+        !@redis.zrank(results_key, id).nil?
       end
     end
     
