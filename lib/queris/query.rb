@@ -18,6 +18,14 @@ module Queris
       @subquery = []
       @ttl ||= 600 #10 minutes default expire
       @created_at = Time.now.utc
+      if expire = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
+        raise "Can't create query with expire_at option and check_staleness options at once" if arg[:check_staleness]
+        raise "Can't create query with expire_at option with track_stats disabled" if arg[:track_stats]==false
+        arg[:track_stats]=true
+        arg[:check_staleness] = Proc.new do |query|
+          query.time_cached < (expire || Time.at(0))
+        end
+      end
       @track_stats = arg[:track_stats]
       @check_staleness = arg[:check_staleness]
       self
