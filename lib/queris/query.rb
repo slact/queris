@@ -214,7 +214,7 @@ module Queris
     end
     
     def results_key
-      if !@queue.empty? && @sort_queue.empty? && @queue.first[:key].length == 1 && [:sunionstore, :sinterstore, :zunionstore, :zinterstore].member?(@queue.first[:command]) && (reused_set_key = @queue.first[:key].first) && @redis.type(reused_set_key)=='set'
+      if !@queue.empty? && @queue.length == 1 && @sort_queue.empty? && @queue.first[:key].length == 1 && [:sunionstore, :sinterstore, :zunionstore, :zinterstore].member?(@queue.first[:command]) && (reused_set_key = @queue.first[:key].first) && @redis.type(reused_set_key)=='set'
         @queue.first[:key].first
       else
         @results_key ||= "#{@redis_prefix}results:" << digest(explain true) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
