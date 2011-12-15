@@ -72,11 +72,11 @@ module Queris
     #don't add this index to the list of indices to be built when calling Queris.rebuild!
     def self.skip_create?; true; end
     
-    def hash_key(obj)
+    def hash_key(obj, prefix=nil, raw_val=false)
       id = obj.kind_of?(@model) ? obj.send(@key) : obj
-      (@keyf) %[@redis_prefix || @model.redis_prefix, id]
+      (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, id]
     end
-    
+    alias :key :hash_key
     def update(obj)
       changed_attrs = obj.changed_cacheable_attributes
       if @attribute.nil?
@@ -147,9 +147,11 @@ module Queris
       raise Exception, "Model not passed to index." unless @model
     end
     
-    def set_key(value, prefix=nil)
-      (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, digest(val value)]
+    def set_key(value, prefix=nil, raw_val=false)
+      (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, raw_val ? value : digest(val value)]
     end
+    alias :key :set_key
+    
     def add(obj, value = nil)
       i=0
       value = index_val( value || obj.send(@attribute), obj)
@@ -236,12 +238,15 @@ module Queris
     def val(val=nil, obj=nil)
       @value.call val, obj
     end
-    def sorted_set_key(val=nil, prefix=nil)
+    def sorted_set_key(val=nil, prefix=nil, raw_val=false)
       (@keyf) %[prefix || @model.redis_prefix, "(...)"]
     end
+    alias :key :sorted_set_key
     
     def add(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
+      #obj_id = obj.send(@key)
+      #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
       @redis.zadd sorted_set_key(obj.send @attribute), my_val, obj.send(@key)
     end
     

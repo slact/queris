@@ -113,10 +113,16 @@ module Queris
     
     def build_redis_indices(build_foreign = true, indices=nil)
       start_time = Time.now
-      all = self.find_all
+      all = self.find_all 
       fetch_time = Time.now - start_time
       redis_start_time, printy, total =Time.now, 0, all.count - 1
-      Queris.redis.multi do
+      index_keys = []
+      print "\rDeleting existing indices..."
+      (indices || redis_indices).each do |index|
+        index_keys.concat(Queris.redis.keys index.key "*", nil, true) #BUG - race condition may prevent all index values from being deleted
+      end
+      Queris.redis.multi do |redis|
+        redis.del *index_keys
         all.each_with_index do |row, i|
           if printy == i
             print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
@@ -124,7 +130,7 @@ module Queris
           end
           row.create_redis_indices indices
         end
-        print "\rBuilt all native indices for #{self.name}. Committing to redis..."
+        print "ok. Committing to redis..."
       end
       print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
       #update all foreign indices
@@ -135,7 +141,7 @@ module Queris
           index.real_index.model.send :build_redis_indices 
         end
       end if build_foreign
-      puts "Built #{redis_indices.count} ind#{redis_indices.index.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
+      puts "Built #{(indices || redis_indices).count} ind#{(indices || redis_indices).count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
       self
     end
   end
