@@ -16,7 +16,7 @@ module Queris
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.query_redis
       @subquery = []
-      @ttl ||= arg[:ttl] || 3.minutes
+      @ttl ||= 600 #10 minutes default expire
       @created_at = Time.now.utc
       @track_stats = arg[:track_stats]
       @check_staleness = arg[:check_staleness]
