@@ -19,6 +19,15 @@ module Queris
       raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
     end
+    def skip_create?
+      @skip_create
+    end
+    def skip_update?
+      @skip_update
+    end
+    def skip_delete?
+      @skip_delete
+    end
     def val(value)
       @value.nil? ? value : @value.call(value)
     end
