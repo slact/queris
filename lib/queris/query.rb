@@ -135,7 +135,6 @@ module Queris
       force||= is_stale?
       if !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
         #do nohing, we're using a results key directly
-        time_cached=Time.now if track_stats?
         set_time_cached Time.now if track_stats?
       elsif force || !@redis.exists(results_key)
         @subquery.each do |q|
