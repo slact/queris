@@ -194,6 +194,7 @@ module Queris
       end
       res
     end
+    alias :raw_results :results
     
     def contains?(id)
       query
