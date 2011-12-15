@@ -35,14 +35,14 @@ module Queris
       Time.at (@redis.hget(stats_key, 'time_cached').to_f || 0)
     end
     
+    def set_time_cached(val)
+      @redis.hset stats_key, 'time_cached', val.to_f
+    end
+    
     def is_stale?
       if @check_staleness.kind_of? Proc
         stale = @check_staleness.call self
       end
-    end
-    
-    def time_cached=(val)
-      @redis.hset stats_key, 'time_cached', val.to_f
     end
     
     #retrieve query parameters, as fed through union and intersect and diff
@@ -128,6 +128,7 @@ module Queris
       if !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
         #do nohing, we're using a results key directly
         time_cached=Time.now if track_stats?
+        set_time_cached Time.now if track_stats?
       elsif force || !@redis.exists(results_key)
         @subquery.each do |q|
           q.query force unless opt[:use_cached_subqueries]
@@ -150,11 +151,13 @@ module Queris
           end
           @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
           @redis.expire results_key, @ttl
-          time_cached=Time.now if track_stats? 
         end
-      elsif @resort #just sort
-        @sort_queue.each do |cmd|
-          send_command cmd, results_key
+        set_time_cached Time.now if track_stats?
+      end
+      if @resort #just sort
+        #puts "QUERY #{explain} resort"
+        @redis.multi do
+          @sort_queue.each { |cmd| send_command cmd, results_key }
         end
       end
       self
