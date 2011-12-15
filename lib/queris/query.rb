@@ -131,12 +131,13 @@ module Queris
     end
     
     def query(force=nil, opt={})
-      #puts "QUERYING #{results_key}"
-      force||= is_stale?
+      force||=is_stale?
       if !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
-        #do nohing, we're using a results key directly
+        #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
+        #do nothing, we're using a results key directly
         set_time_cached Time.now if track_stats?
       elsif force || !@redis.exists(results_key)
+        #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
         @subquery.each do |q|
           q.query force unless opt[:use_cached_subqueries]
         end
@@ -157,6 +158,7 @@ module Queris
             end
           end
           @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
+          #puts "QUERY TTL: @ttl"
           @redis.expire results_key, @ttl
         end
         set_time_cached Time.now if track_stats?
@@ -167,6 +169,7 @@ module Queris
           @sort_queue.each { |cmd| send_command cmd, results_key }
         end
       end
+      #puts "QUERY #{explain} ttl #{@redis.ttl results_key} (should be #{@ttl})"
       self
     end
 

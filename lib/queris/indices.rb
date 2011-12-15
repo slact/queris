@@ -155,6 +155,8 @@ module Queris
     def add(obj, value = nil)
       i=0
       value = index_val( value || obj.send(@attribute), obj)
+      #obj_id = obj.send(@key)
+      #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
       (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
         i +=1
         @redis.sadd set_key(val), obj.send(@key)
