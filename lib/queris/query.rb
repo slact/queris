@@ -141,7 +141,7 @@ module Queris
         @subquery.each do |q|
           q.query force unless opt[:use_cached_subqueries]
         end
-        temp_set = "#{@redis_prefix}Query:temp_sorted_set:#{digest results_key}"
+        temp_set = results_key
         @redis.multi do
           [@queue, @sort_queue].each do |queue|
             first = queue.first
@@ -157,7 +157,6 @@ module Queris
               send_command cmd, temp_set, (queue==@queue && first==cmd)
             end
           end
-          @redis.rename temp_set, results_key #don't care if there's no temp_set, we're in a multi.
           #puts "QUERY TTL: @ttl"
           @redis.expire results_key, @ttl
         end
@@ -387,15 +386,15 @@ module Queris
       self
     end
 
-    def send_command(cmd, temp_set_key, is_first=false)
+    def send_command(cmd, set_key, is_first=false)
       if [:zinterstore, :zunionstore].member? cmd[:command]
         if is_first
-          @redis.send cmd[:command], temp_set_key, cmd[:key], :weights => cmd[:weight]
+          @redis.send cmd[:command], set_key, cmd[:key], :weights => cmd[:weight]
         else
-          @redis.send cmd[:command], temp_set_key, (cmd[:key].kind_of?(Array) ? cmd[:key] : [cmd[:key]]) + [temp_set_key], :weights => (cmd[:weight].kind_of?(Array) ? cmd[:weight] : [cmd[:weight]]) + [0]
+          @redis.send cmd[:command], set_key, (cmd[:key].kind_of?(Array) ? cmd[:key] : [cmd[:key]]) + [set_key], :weights => (cmd[:weight].kind_of?(Array) ? cmd[:weight] : [cmd[:weight]]) + [0]
         end
       else
-        @redis.send cmd[:command], temp_set_key, *cmd[:arg]
+        @redis.send cmd[:command], set_key, *cmd[:arg]
       end
     end
     
