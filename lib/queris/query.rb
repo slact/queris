@@ -30,7 +30,11 @@ module Queris
       @check_staleness = arg[:check_staleness]
       self
     end
-    
+
+    def use_redis(redis_instance)
+      @redis = redis_instance
+    end
+
     def track_stats?
       @track_stats
     end
@@ -247,6 +251,7 @@ module Queris
       @results_key = nil
       if arg.kind_of? Query
         subq = arg
+        subq.use_redis @redis
       else
         subq = self.class.new((arg[:model] or model), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
       end
@@ -305,7 +310,7 @@ module Queris
 
     def build_query_part(command, query, val=nil, multiplier = 1)
       query.subquery(self) unless query.subquery_id(self)
-      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key => 'NOT_THE_REAL_KEY_AT_ALL', :weight => multiplier }]
+      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key =>false , :weight => multiplier }]
     end
 
     private
