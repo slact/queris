@@ -82,7 +82,10 @@ module Queris
       index = check_index(index) #accept string index names and indices and queries
       set_param_from_index index, val
       @results_key = nil
-      if val.kind_of?(Range) && index.kind_of?(RangeIndex) #this doubtfully belongs here. But our Sorted Set diff is a bit of a hack anyway, so...
+      
+      #UGLY HACK ALERT. 
+      #this doubtfully belongs here. But our Sorted Set diff is a bit of a hack anyway, so...
+      if val.kind_of?(Range) && (index.kind_of?(ForeignIndex) ? index.real_index : index).kind_of?(RangeIndex)
         sub = subquery.union(index, val)
         push_commands sub.build_query_part(:zunionstore, self, val, "-inf")
       else
