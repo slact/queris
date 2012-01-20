@@ -178,7 +178,14 @@ module Queris
       #puts "QUERY #{explain} ttl #{@redis.ttl results_key} (should be #{@ttl})"
       self
     end
+    alias :run :query
 
+    def flush
+      @redis.del results_key
+      self
+    end
+    alias :clear :flush
+    
     def results(*arg, &block)
       query
       if arg.last == :reverse
