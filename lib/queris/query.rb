@@ -375,10 +375,11 @@ module Queris
       end
       raise "command must be symbol-like" unless cmd.respond_to? :to_sym
       cmd = cmd.to_sym
-      if (@queue.length == 0 || @queue.last[:command]!=cmd) || @queue.last[:subquery] || arg[:subquery] || !([:zinterstore, :zunionstore].member? cmd)
-        @queue.push :command => cmd, :key =>[], :weight => []
-      end
       last = @queue.last
+      if arg[:inflexible] || @queue.length == 0 || last[:inflexible] || last[:command]!=cmd || last[:subquery] || arg[:subquery] || !([:zinterstore, :zunionstore].member? cmd)
+        last = { :command => cmd, :key =>[], :weight => [] }
+        @queue.push last
+      end
       
       unless arg[:key].nil?
         last[:key] << arg[:key]
