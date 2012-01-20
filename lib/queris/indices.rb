@@ -283,4 +283,23 @@ module Queris
     end
 
   end
+  
+  class CountIndex < RangeIndex
+    def incrby(obj, val)
+      @redis.zincrby sorted_set_key, val, obj.send(@key)
+      if val<0 
+        @redis.zremrangebyscore sorted_set_key, 0, '-inf'
+        #WHOA THERE. We just went O(log(N)) on this simple and presumably O(1) index update. That's bad. 
+        #TODO: probabilistically run every 1/log(N) times or less. Average linear complexity for the win.
+      end
+    end
+    def add(obj)
+      incrby obj, 1
+    end
+    def remove(obj)
+      incrby obj, -1
+    end
+    def update(*arg)
+    end
+  end
 end
