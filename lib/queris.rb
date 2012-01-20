@@ -63,22 +63,18 @@ module Queris
     if ActiveRecord and base.superclass == ActiveRecord::Base then
       require "queris/mixin/active_record"
       base.send :include, ActiveRecordMixin
+    elsif Ohm and base.superclass == Ohm::Model
+      require "queris/mixin/ohm"
+      base.send :include, OhmMixin
     end
   end
   
   def self.redis_prefix(app_name=nil)
+   #i'm using a simple string-concatenation key prefix scheme. I could have used something like Nest, but it seemed excessive.
     if Rails
       "Rails:#{app_name || Rails.application.class.parent.to_s}:#{self.name}:"
     else
       "#{app_name && "#{app_name}:"}#{self.name}:"
-    end
-  end
-  
-  [:create, :update, :delete].each do |op|
-    define_method "#{op}_redis_indices" do |indices=nil|
-      (indices || self.class.redis_indices).each do |index|
-        index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
-      end
     end
   end
 end

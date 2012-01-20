@@ -82,7 +82,7 @@ module Queris
       end
       self
     end
-
+    
     def cache_attribute(attribute_name)
       Queris.register_model self
       Queris::HashCache.new :model => self, :attribute => attribute_name
@@ -95,6 +95,14 @@ module Queris
     
     def get_cached_attribute(attr_name)
       redis_index(attr_name, Queris::HashCache).fetch id
+    end
+    
+    [:create, :update, :delete].each do |op|
+      define_method "#{op}_redis_indices" do |indices=nil|
+        (indices || self.class.redis_indices).each do |index|
+          index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+        end
+      end
     end
     
     def query(arg={})
