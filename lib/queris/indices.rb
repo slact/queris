@@ -265,18 +265,18 @@ module Queris
       when NilClass
         range command, query, nil, nil, false, false, false, multiplier
       else
-        ret = range command, query, '-inf', value || 'inf', false, true, nil, multiplier
-        if value
-          ret += range command, query, val(value), 'inf', true, false, true, multiplier
-        end
-        ret
+        float_val = val(value)
+        range command, query, float_val, float_val, true, true, nil, multiplier
       end
     end
     private
     def range(command, query, min=nil, max=nil, exclude_min=nil, exclude_max=nil, range_only=nil, multiplier=1)
       key, ret = sorted_set_key, []
+      inf = 1.0/0
+      min = nil if min == -inf
+      max = nil if max == inf
       min_param, max_param = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
-      ret << {:command => command, :key => key, :weight => multiplier} unless range_only
+      ret << {:command => command, :key => key, :weight => multiplier, :inflexible => true} unless range_only
       ret <<  {:command => :zremrangebyscore, :arg => ['-inf', min_param]} unless min.nil?
       ret << {:command => :zremrangebyscore, :arg => [max_param, 'inf']} unless max.nil?
       ret
