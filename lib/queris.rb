@@ -7,6 +7,7 @@ require "queris/query"
 require "queris/mixin/object"
 
 module Queris
+  # Queris is a querying and indexing tool for various Ruby objects.
   @indexed_models = []
   @redis
   @query_redis=[]

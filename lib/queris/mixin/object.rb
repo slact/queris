@@ -138,7 +138,7 @@ module Queris
           end
           row.create_redis_indices indices
         end
-        print "ok. Committing to redis..."
+        print "\rBuilding redis indices... ok. Committing to redis..."
       end
       print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
       #update all foreign indices
