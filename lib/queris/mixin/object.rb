@@ -105,14 +105,12 @@ module Queris
       end
     end
     
-    def query(arg={})
-      redis_query arg
+    def query(arg={}, &block)
+      redis_query arg, &block
     end
       
     def redis_query(arg={})
       query = Queris::Query.new self, arg
-      yield query if block_given?
-      query
     end
     
     def build_redis_index(index_name)

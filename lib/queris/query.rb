@@ -2,7 +2,7 @@
 module Queris
   class Query
     attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name, :model, :params
-    def initialize(model, arg=nil)
+    def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
         arg, model = model, model[:model]
       elsif arg.nil?
@@ -28,6 +28,9 @@ module Queris
       end
       @track_stats = arg[:track_stats]
       @check_staleness = arg[:check_staleness]
+      if block_given?
+        instance_eval &block
+      end
       self
     end
 

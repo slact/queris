@@ -7,10 +7,8 @@ module Queris
       base.before_destroy :delete_redis_indices
       base.extend ActiveRecordMixin
     end
-    def redis_query(arg={})
-      query = ActiveRecordQuery.new self, arg
-      yield query if block_given?
-      query
+    def redis_query(arg={}, &block)
+      ActiveRecordQuery.new self, arg, &block
     end
     def find_all
       find :all
