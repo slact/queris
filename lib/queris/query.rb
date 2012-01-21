@@ -36,6 +36,8 @@ module Queris
 
     def use_redis(redis_instance)
       @redis = redis_instance
+      subqueries.each {|sub| sub.use_redis redis_instance}
+      self
     end
 
     def track_stats?
@@ -273,6 +275,10 @@ module Queris
     end
     def subquery_id(subquery)
       @subquery.index subquery
+    end
+    
+    def subqueries
+      @subquery
     end
     
     def explain(omit_subqueries=false)
