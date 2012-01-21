@@ -185,8 +185,13 @@ module Queris
     end
     alias :run :query
 
-    def flush
+    def flush(flush_subqueries=false)
       @redis.del results_key
+      if flush_subqueries
+        subqueries.each do |sub|
+          sub.flush true
+        end
+      end
       self
     end
     alias :clear :flush
