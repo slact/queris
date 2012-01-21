@@ -100,7 +100,7 @@ module Queris
     
     def fetch(id)
       if @attribute.nil?
-        hash = Queris.redis.hgetall hash_key id
+        hash = Queris.query_redis.hgetall hash_key id
         @cached_attr_count ||= (not @attribute.nil?) ? 1 : @model.new.all_cacheable_attributes.length #this line could be a problem if more cacheable attributes are added after the first fetch.
         begin
           if hash.length >= @cached_attr_count
@@ -122,7 +122,7 @@ module Queris
           nil
         end
       else
-        return Queris.redis.hget hash_key(id), @attribute
+        return Queris.query_redis.hget hash_key(id), @attribute
       end
     end
     
