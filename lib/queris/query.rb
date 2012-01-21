@@ -186,7 +186,10 @@ module Queris
     alias :run :query
 
     def flush(flush_subqueries=false)
-      @redis.del results_key
+      @redis.multi do #ensure propagation from master to slave if necessary
+        @redis.set results_key "foobar"
+        @redis.del results_key
+      end
       if flush_subqueries
         subqueries.each do |sub|
           sub.flush true
