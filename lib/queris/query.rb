@@ -187,7 +187,7 @@ module Queris
 
     def flush(flush_subqueries=false)
       @redis.multi do #ensure propagation from master to slave if necessary
-        @redis.set results_key "foobar"
+        @redis.set results_key, ""
         @redis.del results_key
       end
       if flush_subqueries
