@@ -49,9 +49,8 @@ module Queris
   def self.register_model(model)
     @indexed_models << model unless @indexed_models.member? model
   end
-  def self.use_redis(redis, opt={})
-    @query_redis << redis unless opt[:nocache]
-    @redis=redis
+  def self.use_redis(redis_master, opt={})
+    @redis=redis_master
   end
   def self.use_query_redis(*args)
     args.delete_if {|arg| not arg.kind_of? Redis}.each do |arg|
