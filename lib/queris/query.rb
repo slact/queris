@@ -148,12 +148,18 @@ module Queris
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
         set_time_cached Time.now if track_stats?
-      elsif force || !@redis.exists(results_key)
-        #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
+      elsif force || (results_key_type = @redis.type(results_key))[-3..-1] != 'set'
+        #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
+        #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
+        if results_key_type == 'string'
+          #clear dummy key
+          @redis.del results_key
+        end
+        
         @subquery.each do |q|
           q.query force unless opt[:use_cached_subqueries]
         end
-        temp_set = results_key
+        #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
         @redis.multi do
           [@queue, @sort_queue].each do |queue|
             first = queue.first
@@ -166,11 +172,17 @@ module Queris
                 raise "Invalid redis command containing subquery..." unless cmd[:key].count == 1
                 cmd[:key] = [ subquery.results_key ]
               end
-              send_command cmd, temp_set, (queue==@queue && first==cmd)
+              send_command cmd, results_key, (queue==@queue && first==cmd)
             end
           end
           #puts "QUERY TTL: @ttl"
           @redis.expire results_key, @ttl
+        end
+        if (master = Queris.redis_master) != @redis #we're on a slave
+          if results_key_type == 'none'
+            master.setnx results_key, '' #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
+            master.expire results_key, @ttl
+          end
         end
         set_time_cached Time.now if track_stats?
       end
@@ -205,16 +217,19 @@ module Queris
         arg.shift
       end
       key = results_key
-      if @redis.type(key) == 'set'
+      case @redis.type(key)
+      when 'set'
         res = @redis.smembers key
         raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." unless arg.empty?
-      else
+      when 'zset'
         if arg.first && arg.first.kind_of?(Range)
           first, last = arg.first.begin, arg.first.end - (arg.first.exclude_end? ? 1 : 0)
         else
           first, last = arg.first.to_i, (arg.second || -1).to_i
         end
         res = reverse ? @redis.zrange(key, first, last) : @redis.zrevrange(key, first, last)
+      else
+        res = []
       end
       if block_given?
         res.map!(&block)
@@ -225,10 +240,15 @@ module Queris
     
     def contains?(id)
       query
-      if @redis.type(results_key) == 'set'
+      case @redis.type(results_key)
+      when 'set'
         @redis.sismember(results_key, id)
-      else
+      when 'zset'
         !@redis.zrank(results_key, id).nil?
+      when 'none'
+        false
+      else
+        #what happened?
       end
     end
     
@@ -259,10 +279,13 @@ module Queris
     def length
       query
       key = results_key
-      if @redis.type(key) == 'set'
+      case @redis.type(key)
+      when 'set'
         @redis.scard key
-      else #not a set. assume it's a sorted set
+      when 'zset'
         @redis.zcard key
+      else #not a set. 
+        0
       end
     end
     alias :size :length
