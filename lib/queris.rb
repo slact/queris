@@ -16,6 +16,9 @@ module Queris
   def self.redis
     @redis || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
   end
+  def self.redis_master
+    redis
+  end
 
   def self.query_redis
     unless @query_redis.nil? or @query_redis.empty?

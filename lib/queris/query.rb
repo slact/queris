@@ -186,10 +186,9 @@ module Queris
     alias :run :query
 
     def flush(flush_subqueries=false)
-      @redis.multi do #ensure propagation from master to slave if necessary
-        @redis.set results_key, ""
-        @redis.del results_key
-      end
+      Queris.redis_master.del results_key 
+      #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
+      #otherwise, we'd have to create the key first (in a MULTI, of course)
       if flush_subqueries
         subqueries.each do |sub|
           sub.flush true
