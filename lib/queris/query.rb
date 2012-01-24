@@ -12,6 +12,7 @@ module Queris
       @model = model
       @params = {}
       @queue, @sort_queue = [], []
+      @used_index={}
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.query_redis
@@ -68,7 +69,7 @@ module Queris
     end
     
     def union(index, val=nil)
-      index = check_index index  #accept string index names and indices and queries
+      index = use_index index  #accept string index names and indices and queries
       set_param_from_index index, val
       @results_key = nil
       push_commands index.build_query_part(:zunionstore, self, val, 1)
@@ -76,7 +77,7 @@ module Queris
     end
     
     def intersect(index, val=nil)
-      index = check_index index  #accept string index names and indices and queries
+      index = use_index index  #accept string index names and indices and queries
       set_param_from_index index, val
       @results_key = nil
       push_commands index.build_query_part(:zinterstore, self, val, 1)
@@ -84,7 +85,7 @@ module Queris
     end
     
     def diff(index, val=nil)
-      index = check_index(index) #accept string index names and indices and queries
+      index = use_index(index) #accept string index names and indices and queries
       set_param_from_index index, val
       @results_key = nil
       
@@ -119,7 +120,7 @@ module Queris
         @sort_queue = []
         @sort_index_name = nil
       else
-        index = check_index index #accept string index names and indices and queries
+        index = use_index index #accept string index names and indices and queries
         if not index.kind_of? ForeignIndex
           raise Exception, "Must have a RangeIndex for sorting" unless index.kind_of? RangeIndex
         end
@@ -197,16 +198,33 @@ module Queris
     end
     alias :run :query
 
-    def flush(flush_subqueries=false)
-      Queris.redis_master.del results_key 
-      #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
-      #otherwise, we'd have to create the key first (in a MULTI, of course)
-      if flush_subqueries
-        subqueries.each do |sub|
-          sub.flush true
-        end
+    def uses_index?(*index)
+      index.each do |ind|
+        index_name = Queris::Index === ind ? ind.name : ind.to_sym
+        return true if @used_index[index_name]
       end
-      self
+      false
+    end    
+    
+    # recursively and conditionally flush query and subqueries
+    # arg parameters: flush query if:
+    #  :ttl - query.ttl <= ttl
+    #  :index (symbol or index or an array of them) - query uses th(is|ese) ind(ex|ices)
+    # or flush conditionally according to passed block: flush {|query| true }
+    # when no parameters or block present, flush only this query and no subqueries
+    def flush(arg={})
+      flushed = 0
+      if block_given? #efficiency hackety hack - anonymous blocs are heaps faster than bound ones
+        subqueries.each { |sub| flushed += sub.flush arg, Proc.new }
+      elsif arg.count>0
+        subqueries.each { |sub| flushed += sub.flush arg }
+      end
+      if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index? *arg[:index]) || block_given? && (yield sub)
+        #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
+        #otherwise, we'd have to create the key first (in a MULTI, of course)
+        flushed += Queris.redis_master.del results_key
+      end
+      flushed
     end
     alias :clear :flush
     
@@ -363,16 +381,17 @@ module Queris
     end
 
     private
-    def check_index *arg
+    def use_index *arg
       if (res=@model.redis_index(*arg)).nil?
         raise ArgumentError, "Invalid Queris index (#{arg.inspect}) passed to query. May be a string (index name), an index, or a query."
       else
+        @used_index[res.name.to_sym]=true if res.respond_to? :name
         res
       end
     end
     
     def set_param_from_index(index, val)
-      index = check_index index
+      index = use_index index
       @params[index.name]=val if index.respond_to? :name
       val
     end
