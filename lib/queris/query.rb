@@ -16,7 +16,7 @@ module Queris
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.query_redis
       @subquery = []
-      @ttl ||= 600 #10 minutes default expire
+      @ttl= arg[:ttl] || 600 #10 minutes default expire
       @created_at = Time.now.utc
       if expire = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
         raise "Can't create query with expire_at option and check_staleness options at once" if arg[:check_staleness]
