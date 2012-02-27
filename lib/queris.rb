@@ -5,6 +5,7 @@ require 'digest/sha1'
 require "queris/indices"
 require "queris/query"
 require "queris/mixin/object"
+require "queris/model"
 
 module Queris
   # Queris is a querying and indexing tool for various Ruby objects.
