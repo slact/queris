@@ -13,8 +13,17 @@ module Queris
   @query_redis=[]
   
   #shared redis connection
-  def self.redis
-    @redis || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
+  def self.redis(redis_role=nil)
+    unless redis_role
+      @redis || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
+    else
+      case redis_role.to_sym
+      when :master
+        @redis
+      else
+        raise "Not yet implemented"
+      end
+    end
   end
   def self.redis_master
     redis
