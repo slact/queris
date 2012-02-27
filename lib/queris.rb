@@ -74,10 +74,12 @@ module Queris
   
   def self.redis_prefix(app_name=nil)
    #i'm using a simple string-concatenation key prefix scheme. I could have used something like Nest, but it seemed excessive.
-    if Rails
+    if Object.const_defined? 'Rails'
       "Rails:#{app_name || Rails.application.class.parent.to_s}:#{self.name}:"
+    elsif app_name.nil?
+      "#{self.name}:"
     else
-      "#{app_name && "#{app_name}:"}#{self.name}:"
+      "#{app_name}:#{self.name}:"
     end
   end
 end
