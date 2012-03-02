@@ -7,36 +7,52 @@ require "queris/query"
 require "queris/mixin/object"
 require "queris/model"
 
+# Queris is a querying and indexing tool for various Ruby objects.
 module Queris
-  # Queris is a querying and indexing tool for various Ruby objects.
-  @indexed_models = []
-  @redis
-  @query_redis=[]
   
-  #shared redis connection
-  def self.redis(redis_role=nil)
-    unless redis_role
-      @redis || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
-    else
-      case redis_role.to_sym
-      when :master
-        @redis
-      else
-        raise "Not yet implemented"
+  @indexed_models = []
+  
+  @redis_connections=[]
+  @redis_by_role={}
+  
+  #retrieve redis connection matching given redis server role, in order or decreasing preference
+  def self.redis(*redis_roles)
+    redises(*redis_roles).sample || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
+  end
+    
+
+  # get all redis connections for given redis server role.
+  # when more than one role is passed, treat them in order of decreasing preference
+  # when no role is given, :master is assumed
+
+  def self.redises(*redis_roles)
+    redis_roles << :master if redis_roles.empty? #default
+    redis_roles.each do |role|
+      unless (redises=@redis_by_role[role]).nil? || redises.empty?
+        return redises
       end
     end
+    []
   end
+  
+  def self.add_redis(redis, *roles)
+    roles << :master if roles.empty?
+    @redis_connections << redis
+    roles.each do |role|
+      @redis_by_role[role]||=[]
+      @redis_by_role[role] << redis
+    end
+  end
+  
+  
   def self.redis_master
-    redis
+    redis :master
   end
 
   def self.query_redis
-    unless @query_redis.nil? or @query_redis.empty?
-      @query_redis[rand @query_redis.length]
-    else
-      redis
-    end
+    redis :slave, :master
   end
+  
   #rebuild all known queris indices
   def self.rebuild!(clear=false)
     start = Time.now
@@ -56,18 +72,22 @@ module Queris
   end
 
   def self.all_redises
-    ([redis] + @query_redis).uniq
+    @redis_connections
   end
   
   def self.register_model(model)
     @indexed_models << model unless @indexed_models.member? model
   end
+  
+  #OBSOLETE
   def self.use_redis(redis_master, opt={})
-    @redis=redis_master
+    add_redis redis_master, :master
   end
+  
+  #OBSOLETE
   def self.use_query_redis(*args)
     args.delete_if {|arg| not arg.kind_of? Redis}.each do |arg|
-      @query_redis << arg
+      add_redis arg, :slave
     end
   end
 

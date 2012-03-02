@@ -15,7 +15,7 @@ module Queris
       @used_index={}
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
-      @redis=arg[:redis] || Queris.query_redis
+      @redis=arg[:redis] || Queris.redis(:query, :slave, :master)
       @subquery = []
       @ttl= arg[:ttl] || 600 #10 minutes default expire
       @created_at = Time.now.utc
@@ -179,7 +179,7 @@ module Queris
           #puts "QUERY TTL: @ttl"
           @redis.expire results_key, @ttl
         end
-        if (master = Queris.redis_master) != @redis #we're on a slave
+        if (master = Queris.redis :master) != @redis #we're on a slave
           if results_key_type == 'none'
             master.setnx results_key, '' #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
             master.expire results_key, @ttl
@@ -222,7 +222,7 @@ module Queris
       if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index? *arg[:index]) || block_given? && (yield sub)
         #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
         #otherwise, we'd have to create the key first (in a MULTI, of course)
-        flushed += Queris.redis_master.del results_key
+        flushed += Queris.redis(:master).del results_key
       end
       flushed
     end
@@ -372,7 +372,7 @@ module Queris
       arg.each do |n,v|
         instance_variable_set "@#{n}", v
       end
-      @redis ||= Queris.query_redis
+      @redis ||= Queris.redis :query, :slave, :master
     end
 
     def build_query_part(command, query, val=nil, multiplier = 1)
