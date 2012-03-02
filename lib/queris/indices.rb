@@ -95,7 +95,7 @@ module Queris
     end
     
     def delete(obj)
-      Queris.redis.del hash_key obj
+      @redis.del hash_key obj
     end
     
     def fetch(id)
@@ -135,7 +135,7 @@ module Queris
       attrs.each do |v|
         marshaled[v]=Marshal.dump obj.send(v)
       end
-      Queris.redis.mapped_hmset key, marshaled
+      @redis.mapped_hmset key, marshaled
     end
     
   end
