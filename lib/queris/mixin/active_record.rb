@@ -14,11 +14,6 @@ module Queris
       find :all
     end
     
-    def cache_all_attributes
-      Queris.register_model self
-      Queris::HashCache.new :model => self
-    end
-    
     def find_cached(id, cache_it=true)
       #POTENTIAL OPTIMIZATION: accept Enumerable id, pipeline redis commands
       cache = redis_index("all_attribute_hashcache", Queris::HashCache)

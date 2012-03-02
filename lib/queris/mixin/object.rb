@@ -88,6 +88,12 @@ module Queris
       Queris::HashCache.new :model => self, :attribute => attribute_name
     end
     
+    def cache_all_attributes
+      Queris.register_model self
+      Queris::HashCache.new :model => self
+    end
+    alias :cache_object :cache_all_attributes
+    
     def cache_attribute_from(arg)
       arg[:index]=Queris::HashCache
       index_attribute_from arg
