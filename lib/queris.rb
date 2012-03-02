@@ -92,11 +92,12 @@ module Queris
   end
 
   def self.included(base)
+    return if base.include? Queris #include only once
     base.send :include, ObjectMixin
-    if ActiveRecord and base.superclass == ActiveRecord::Base then
+    if const_defined?('ActiveRecord') and base.superclass == ActiveRecord::Base then
       require "queris/mixin/active_record"
       base.send :include, ActiveRecordMixin
-    elsif Ohm and base.superclass == Ohm::Model
+    elsif const_defined?('Ohm') and base.superclass == Ohm::Model
       require "queris/mixin/ohm"
       base.send :include, OhmMixin
     end
