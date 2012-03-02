@@ -107,7 +107,7 @@ module Queris
     end
     
     [:create, :update, :delete].each do |op|
-      define_method "#{op}_redis_indices" do |indices=nil|
+      define_method "#{op}_redis_indices" do |indices=nil, redis=nil|
         (indices || self.class.redis_indices).each do |index|
           index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
         end
@@ -126,17 +126,21 @@ module Queris
       build_redis_indices(true, [ redis_index(index_name) ])
     end
     
+    def redis
+      Queris.redis
+    end
+    
     def build_redis_indices(build_foreign = true, indices=nil)
       start_time = Time.now
-      all = self.find_all 
+      all = self.find_all
       fetch_time = Time.now - start_time
       redis_start_time, printy, total =Time.now, 0, all.count - 1
       index_keys = []
       print "\rDeleting existing indices..."
       (indices || redis_indices).each do |index|
-        index_keys.concat(Queris.redis.keys index.key "*", nil, true) #BUG - race condition may prevent all index values from being deleted
+        index_keys.concat(redis.keys index.key "*", nil, true) #BUG - race condition may prevent all index values from being deleted
       end
-      Queris.redis.multi do |redis|
+      redis.multi do |redis|
         redis.del *index_keys
         all.each_with_index do |row, i|
           if printy == i
