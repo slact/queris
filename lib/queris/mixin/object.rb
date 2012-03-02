@@ -44,6 +44,9 @@ module Queris
     end
     
     def index_attribute(arg={}, &block)
+      if arg.kind_of? Symbol 
+        arg = {:attribute => arg }
+      end
       index_class = arg[:index] || Queris::SearchIndex
       raise ArgumentError, "index argument must be in Queris::Index if given" unless index_class <= Queris::Index
       Queris.register_model self
