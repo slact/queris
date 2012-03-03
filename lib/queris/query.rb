@@ -329,19 +329,26 @@ module Queris
       @subquery
     end
     
-    def explain(omit_subqueries=false)
+    def explain(opt={})
       explaining = @explanation.map do |part| #subqueries!
-        if !omit_subqueries && (match = part.match(/(?<op>.*){subquery (?<id>\d+)}$/))
-          "#{match[:op]}#{@subquery[match[:id].to_i].explain}"
+        part = part.to_s
+        if opt[:subqueries]!=false && (match = part.match(/(?<op>.*){subquery (?<id>\d+)}$/))
+          "#{match[:op]}#{@subquery[match[:id].to_i].explain(opt)}"
+        elsif opt[:structure]
+          part.sub!(/<.*>$/, "") || part
         else
           part
         end
       end
       if explaining.empty?
         "(∅)"
-      else 
+      else
         "(#{explaining.join ' '})"
       end
+    end
+    
+    def structure
+      explain :structure => true
     end
     
     def info(indent="")
@@ -420,7 +427,7 @@ module Queris
         s = "#{index.name}#{!value.to_s.empty? ? '<' + value.to_s + '>' : nil}"
       end
       
-      @explanation << "#{op}#{s}"
+      @explanation << "#{op}#{s}".to_sym #because symbols are immutable
       self
     end
   
