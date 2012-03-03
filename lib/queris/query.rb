@@ -243,7 +243,7 @@ module Queris
         if arg.first && arg.first.kind_of?(Range)
           first, last = arg.first.begin, arg.first.end - (arg.first.exclude_end? ? 1 : 0)
         else
-          first, last = arg.first.to_i, (arg.second || -1).to_i
+          first, last = arg.first.to_i, (arg[1] || -1).to_i
         end
         res = reverse ? @redis.zrange(key, first, last) : @redis.zrevrange(key, first, last)
       else
@@ -426,7 +426,7 @@ module Queris
   
     def push_command(*args)
       if args.first.respond_to? :to_sym
-        cmd, arg =  args.first, args.second
+        cmd, arg =  args.first, args[1]
       else
         cmd = args.first[:command]
         arg = args.first
