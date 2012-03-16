@@ -43,6 +43,12 @@ module Queris
       end
     end
     
+    def profile_queries
+      require "queris/profiler"
+      @profile = true
+    end
+    def profile_queries?; @profile; end
+    
     def index_attribute(arg={}, &block)
       if arg.kind_of? Symbol 
         arg = {:attribute => arg }

@@ -1,6 +1,14 @@
 # encoding: utf-8
 module Queris
   class Query
+    
+    class DummyProfiler
+      def method_missing(*args, &block)
+        self
+      end
+      def nil?; true; end
+    end
+    
     attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name, :model, :params
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
@@ -16,6 +24,7 @@ module Queris
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.redis(:query, :slave, :master)
+      @profile = model.profile_queries? ? Queris::Profiler.new(nil, :redis => @redis) : DummyProfiler.new
       @subquery = []
       @ttl= arg[:ttl] || 600 #10 minutes default expire
       @created_at = Time.now.utc
@@ -41,10 +50,17 @@ module Queris
       self
     end
 
+    def stats
+      raise "Query isn't profiled, no stats available" if @profile.nil?
+      @profile.load
+    end
+    
+    #TODO: obsolete this
     def track_stats?
       @track_stats
     end
     
+    #TODO: obsolete this
     def stats_key
       "#{@redis_prefix}:stats:#{digest explain}"
     end
@@ -143,15 +159,24 @@ module Queris
       self
     end
     
+    def profiler 
+      @profile
+    end
+    
     def query(force=nil, opt={})
+      @profile.set_profile_id self
       force||=is_stale?
       if !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
+        @profile.record :cache_hit, 1
         set_time_cached Time.now if track_stats?
       elsif force || (results_key_type = @redis.type(results_key))[-3..-1] != 'set'
+
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
         #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
+        @profile.record :cache_miss, 1 
+        @profile.start :run_time
         if results_key_type == 'string'
           #clear dummy key
           @redis.del results_key
@@ -186,8 +211,12 @@ module Queris
           end
         end
         set_time_cached Time.now if track_stats?
+        @profile.finish :run_time
+        @profile.save
+        puts "updating quuery profile for #{structure}"
       end
       if @resort #just sort
+        #TODO: profile resorts
         #puts "QUERY #{explain} resort"
         @redis.multi do
           @sort_queue.each { |cmd| send_command cmd, results_key }
@@ -204,7 +233,7 @@ module Queris
         return true if @used_index[index_name]
       end
       false
-    end    
+    end
     
     # recursively and conditionally flush query and subqueries
     # arg parameters: flush query if:
@@ -222,7 +251,7 @@ module Queris
       if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index? *arg[:index]) || block_given? && (yield sub)
         #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
         #otherwise, we'd have to create the key first (in a MULTI, of course)
-        flushed += Queris.redis(:master).del results_key
+        flushed += (Queris.redis(:master) || @redis).del results_key
       end
       flushed
     end
@@ -230,6 +259,7 @@ module Queris
     
     def results(*arg, &block)
       query
+      @profile.start :results_time
       if arg.last == :reverse
         reverse = true
         arg.shift
@@ -252,6 +282,10 @@ module Queris
       if block_given?
         res.map!(&block)
       end
+      
+      @profile.finish :results_time
+      puts "updating results profile for #{structure}"
+      @profile.save
       res
     end
     alias :raw_results :results
@@ -284,7 +318,7 @@ module Queris
         if !@queue.empty? && @queue.length == 1 && @sort_queue.empty? && @queue.first[:key].length == 1 && [:sunionstore, :sinterstore, :zunionstore, :zinterstore].member?(@queue.first[:command]) && (reused_set_key = @queue.first[:key].first) && @redis.type(reused_set_key)=='set'
           @results_key = @queue.first[:key].first
         else
-          @results_key ||= "#{@redis_prefix}results:" << digest(explain true) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
+          @results_key ||= "#{@redis_prefix}results:" << digest(explain :subqueries => false) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
         end
       end
       @results_key
