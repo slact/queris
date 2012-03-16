@@ -179,7 +179,7 @@ module Queris
           #puts "QUERY TTL: @ttl"
           @redis.expire results_key, @ttl
         end
-        if (master = Queris.redis :master) != @redis #we're on a slave
+        if (master = Queris.redis :master) != @redis && !master.nil?  #we're on a slave
           if results_key_type == 'none'
             master.setnx results_key, '' #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
             master.expire results_key, @ttl
