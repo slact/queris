@@ -5,7 +5,7 @@ module Queris
       arg.each do |opt, val|
         instance_variable_set "@#{opt}".to_sym, val
       end
-      @redis ||= Queris.redis
+      @redis = arg[:redis]
       @name ||= @attribute
       @attribute ||= @name
       @attribute = @attribute.to_sym unless !@attribute
@@ -18,6 +18,9 @@ module Queris
       raise ArgumentError, "Index must have a name" unless @name
       raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
+    end
+    def redis
+      @redis || @model.redis || Queris.redis(:index, :slave, :master)
     end
     def skip_create?
       @skip_create
@@ -95,7 +98,7 @@ module Queris
     end
     
     def delete(obj)
-      @redis.del hash_key obj
+      (redis || obj.redis).del hash_key obj
     end
     
     def fetch(id)
@@ -135,7 +138,7 @@ module Queris
       attrs.each do |v|
         marshaled[v]=Marshal.dump obj.send(v)
       end
-      @redis.mapped_hmset key, marshaled
+      redis.mapped_hmset key, marshaled
     end
     
   end
@@ -157,15 +160,15 @@ module Queris
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
       if value.kind_of?(Enumerable)
-        value.each{|val| @redis.sadd set_key(val), obj.send(@key)}
+        value.each{|val| (redis || obj.redis).sadd set_key(val), obj.send(@key)}
       else
-        @redis.sadd set_key(value), obj.send(@key)
+        (redis || obj.redis).sadd set_key(value), obj.send(@key)
       end
     end
     def remove(obj, value = nil)
       value = index_val( value || obj.send(@attribute), obj)
       (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
-        @redis.srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
+        (redis || obj.redis).srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
       end
     end
 
@@ -217,21 +220,24 @@ module Queris
       @counter_keyf % (val || value_is(obj))
     end
     def add(obj, value=nil)
-      k = @redis.incr counter_key(obj)
+      k = (redis || obj.redis).incr counter_key(obj)
       if k == @threshold
         super obj
       end
     end
     def remove(obj, value=nil)
       ckey = counter_key obj
-      @redis.decr ckey
-      if @redis.get(ckey).to_i. < @threshold
-        @redis.del ckey
+      redis = (redis || obj.redis)
+      redis.decr ckey
+      if redis.get(ckey).to_i. < @threshold
+        redis.del ckey
         super obj
       end
     end
   end
   
+  
+  # The power of sorted sets
   class RangeIndex < SearchIndex
     def initialize(arg)
       @value ||= proc { |x| x.to_f }
@@ -245,15 +251,28 @@ module Queris
     end
     alias :key :sorted_set_key
     
+    def update(obj)
+      val_is, val_was = value_is(obj), value_was(obj)
+      if(val_is != val_was)
+        #removal is implicit with the way we're using sorted sets
+        add(obj)
+      end
+    end
+    
     def add(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
-      @redis.zadd sorted_set_key(obj.send @attribute), my_val, obj.send(@key)
+      (redis || obj.redis).zadd sorted_set_key(obj.send @attribute), my_val, obj.send(@key)
+    end
+    
+    def increment(obj, value=nil)
+      my_val = val(value || value_is(obj), obj)
+      (redis || obj.redis).zincrby sorted_set_key(obj.send @attribute), my_val, obj.send(@key)
     end
     
     def remove(obj, value=nil)
-      @redis.zrem sorted_set_key(obj.send @attribute), obj.send(@key)
+      (redis || obj.redis).zrem sorted_set_key(obj.send @attribute), obj.send(@key)
     end
 
     def build_query_part(command, query, value, multiplier=1)
@@ -286,11 +305,11 @@ module Queris
   
   class CountIndex < RangeIndex
     def incrby(obj, val)
-      @redis.zincrby sorted_set_key, val, obj.send(@key)
+      (redis || obj.redis).zincrby sorted_set_key, val, obj.send(@key)
       if val<0 
-        @redis.zremrangebyscore sorted_set_key, 0, '-inf'
+        (redis || obj.redis).zremrangebyscore sorted_set_key, 0, '-inf'
         #WHOA THERE. We just went O(log(N)) on this simple and presumably O(1) index update. That's bad. 
-        #TODO: probabilistically run every 1/log(N) times or less. Average linear complexity for the win.
+        #TODO: probabilistically run every 1/log(N) times or less. Average linear complexity for a modicum of win.
       end
     end
     def add(obj)
