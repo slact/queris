@@ -303,6 +303,29 @@ module Queris
 
   end
   
+  
+  #a stateful index that cannot be rebuilt without losing data.
+  class AccumulatorIndex < RangeIndex
+    def add(obj, value=nil)
+      increment(obj, value)
+    end
+  end
+  
+  class DecayingAccumulatorIndex < AccumulatorIndex
+    TIME_OFFSET=Time.new(2012,1,1).to_f #change this every few years to current date to maintain decent index resolution
+    attr_reader :half_life
+    def initialize(arg)
+      @half_life = (arg[:half_life] || arg[:hl]).to_f
+      @value = Proc.new do |val|
+        val * 2.0 **(t(Time.now.to_f)/@half_life)
+      end
+      super arg
+    end
+    def t(seconds)
+      seconds - TIME_OFFSET
+    end
+  end
+  
   class CountIndex < RangeIndex
     def incrby(obj, val)
       (redis || obj.redis).zincrby sorted_set_key, val, obj.send(@key)
