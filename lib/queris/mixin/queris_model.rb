@@ -1,4 +1,31 @@
 module Queris
+  module QuerisModelMixin
+    def self.included(base)
+      base.extend QuerisModelMixin
+    end
+    def redis_query(arg={})
+      query = QuerisModelQuery.new self, arg.merge(:redis => redis(true))
+      yield query if block_given?
+      query
+    end
+    
+    def find(id)
+      new.set_id(id).load
+    end
+    
+    #don't save attributes, just index them. useful at times.
+    def index_only
+      @index_only = true
+    end
+    
+    def index_attribute(arg={}, &block)
+      if arg.kind_of? Symbol 
+        arg = {:attribute => arg }
+      end
+      super arg.merge(:redis => redis), &block
+    end
+  end
+  
   class QuerisModelQuery < Query
     #TODO
     attr_accessor :params

@@ -1,9 +1,10 @@
 module Queris
   class Model
     attr_reader :id
-    include Queris
-    include ObjectMixin
+    include Queris #this doesn't trigger Queris::included as it seems it ought to...
     require "queris/mixin/queris_model"
+    include ObjectMixin
+    include QuerisModelMixin
     
     #get/setter
     def self.redis(redis_client=nil)
@@ -17,9 +18,10 @@ module Queris
       @prefix ||= "#{Queris.redis_prefix}#{self.superclass.name}:#{self.name}:"
     end
     
-    def initialize(id=nil)
+    def initialize(id=nil, arg={})
       set_id id unless id.nil?
       @attributes_were = {}
+      @redis = arg[:redis]
     end
     
     def self.attribute(attr_name)
@@ -27,6 +29,10 @@ module Queris
       @attributes ||= []
       define_method "#{attr_name}_was" do 
         @attributes_were[attr_name]
+      end
+      define_method "#{attr_name}_was=" do |val|
+        puts "set prev value of #{attr_name} to #{val}"
+        @attributes_were[attr_name]=val
       end
       @attributes << attr_name.to_sym
     end
@@ -44,27 +50,11 @@ module Queris
       alias :attr :attribute
       alias :attrs :attributes
     end
-
-    def self.find(id)
-      new.set_id(id).load
-    end
-    
-    def self.index_attribute(arg={}, &block)
-      if arg.kind_of? Symbol 
-        arg = {:attribute => arg }
-      end
-      super arg.merge(:redis => redis), &block
-    end
-    
-    def self.redis_query(arg={})
-      query = QuerisModelQuery.new self, arg.merge(:redis => redis(true))
-      yield query if block_given?
-      query
-    end
+   
 
     #get/setter
     def self.expire(seconds=nil)
-      #note that using expire will not update indices, leading to some stale indices
+      #note that using expire will not update indices, leading to some serious staleness
       unless seconds.nil?
         @expire = seconds
       else
@@ -72,17 +62,22 @@ module Queris
       end
     end
     
-    def set_id(id)
-      raise "id already exists and is #{self.id}" unless self.id.nil?
+    def set_id(id, overwrite=false)
+      raise "id already exists and is #{self.id}" unless overwrite || self.id.nil?
       @id = id
       self
+    end
+    def id= (new_id)
+      set_id new_id
     end
 
     def save
       key = hash_key #before multi
       redis.multi do
-        redis.mapped_hmset key, attr_hash
-        expire_sec = self.class.expire
+        unless index_only
+          redis.mapped_hmset key, attr_hash 
+          expire_sec = self.class.expire
+        end
         update_redis_indices if defined? :update_redis_indices
         attributes.each do |attr|
           @attributes_were[attr] = send attr
@@ -102,6 +97,7 @@ module Queris
     end
 
     def load
+      raise "Can't load #{self.class.name} with id #{id} -- model was specified as index_only, so it was never saved." if index_only
       h = redis.hgetall hash_key
       attributes.each do |attr_name|
         val = h[attr_name.to_s]
@@ -111,6 +107,14 @@ module Queris
       self
     end
 
+    def import(attrs={})
+      attrs.each do |attr_name, val|
+        send "#{attr_name}=", val
+        @attributes_were[attr_name] = val
+      end
+      self
+    end
+    
     def self.find_all
       keys = redis.keys "#{prefix}*"
       keys.map! do |key|
@@ -120,17 +124,21 @@ module Queris
       
     end
 
+    def redis(no_fallback=false)
+      if no_fallback
+        @redis || self.class.redis
+      else
+        @redis || self.class.redis || Queris.redis
+      end
+    end
+    
     private
 
     def prefix
       self.class.prefix
     end
-    def redis(no_fallback=false)
-      if no_fallback
-        self.class.redis
-      else
-        self.class.redis || Queris.redis
-      end
+    def index_only
+      @index_only ||= self.class.class_eval do @index_only end #ugly
     end
     def attributes
       self.class.attributes
