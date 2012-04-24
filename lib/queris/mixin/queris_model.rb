@@ -9,8 +9,23 @@ module Queris
       query
     end
     
-    def find(id)
-      new.set_id(id).load
+    
+    def add_redis_index(index, opt={})
+      @incremental_attr ||= {}
+      ret = super(index, opt)
+      if @incremental_attr[index.attribute].nil?
+        @incremental_attr[index.attribute] = index.incremental?
+      else
+        @incremental_attr[index.attribute] &&= index.incremental?
+      end
+      ret
+    end
+    def can_increment_attribute?( attr_name )
+      @incremental_attr[attr_name.to_sym]
+    end
+    
+    def find(id, opt={})
+      new(id, opt).load
     end
     
     #don't save attributes, just index them. useful at times.

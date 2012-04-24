@@ -20,21 +20,56 @@ module Queris
     
     def initialize(id=nil, arg={})
       set_id id unless id.nil?
+      @attributes = {}
+      @attributes_to_save = {}
+      @attributes_to_incr = {}
       @attributes_were = {}
       @redis = arg[:redis]
     end
     
     def self.attribute(attr_name)
-      attr_accessor attr_name
-      @attributes ||= []
+      @attributes ||= [] #Class instance var
+      attr_name = attr_name.to_sym
+      raise ArgumentError, "Attribute #{attr_name} already exists in Queris model #{self.name}." if @attributes.member? attr_name
+      
+      define_method "#{attr_name}" do |noload=false|
+        if (val = @attributes[attr_name]).nil? && !@loaded && !noload
+          load
+          send attr_name, true
+        else
+          val
+        end
+      end
+      
+      define_method "#{attr_name}=" do |val| #setter
+        if @attributes_were[attr_name].nil?
+          @attributes_were[attr_name] = @attributes[attr_name] 
+        end
+        @attributes_to_save[attr_name]=val
+        @attributes[attr_name]=val
+      end
+      
       define_method "#{attr_name}_was" do 
         @attributes_were[attr_name]
       end
+      
       define_method "#{attr_name}_was=" do |val|
-        puts "set prev value of #{attr_name} to #{val}"
         @attributes_were[attr_name]=val
       end
-      @attributes << attr_name.to_sym
+      private "#{attr_name}_was="
+      
+      attributes << attr_name
+    end
+
+    def increment(attr_name, delta_val)
+      raise ArgumentError, "Can't increment attribute #{attr_name} because it uses at least one non-incrementable index." unless self.class.can_increment_attribute? attr_name
+      raise ArgumentError, "Can't increment attribute #{attr_name} by non-numeric value <#{delta_val}>. Increment only by numbers, please." unless delta_val.kind_of? Numeric
+      
+      @attributes_to_incr[attr_name.to_sym]=delta_val
+      unless (val = send(attr_name, true)).nil?
+        send "#{attr_name}=", val + delta_val
+      end
+      self
     end
 
     #get/setter
@@ -50,7 +85,6 @@ module Queris
       alias :attr :attribute
       alias :attrs :attributes
     end
-   
 
     #get/setter
     def self.expire(seconds=nil)
@@ -73,20 +107,44 @@ module Queris
 
     def save
       key = hash_key #before multi
-      redis.multi do
-        unless index_only
-          redis.mapped_hmset key, attr_hash 
-          expire_sec = self.class.expire
+      
+      # to ensure atomicity, we unfortunately need two round trips to redis
+      begin
+        if @attributes_to_save.length > 0
+          bulk_response = redis.pipelined do
+            redis.watch key
+            redis.hmget key, *@attributes_to_save.keys
+          end
+          bulk_response.last.each do |attr, val| #sync with server
+            @attributes_were[attr]=val
+          end
         end
-        update_redis_indices if defined? :update_redis_indices
-        attributes.each do |attr|
-          @attributes_were[attr] = send attr
+        bulk_response = redis.multi do
+          unless index_only
+            @attributes_to_incr.each do |attr, incr_by_val|
+              redis.hincrbyfloat key, attr, incr_by_val #redis server >= 2.6
+              unless (val = send(attr, true)).nil?
+                @attributes_were[attr]=val
+              end
+            end
+            redis.mapped_hmset key, @attributes_to_save
+            expire_sec = self.class.expire
+          end
+
+          update_redis_indices if defined? :update_redis_indices
+
+          @attributes_to_save.each {|attr, val| @attributes_were[attr]=val }
+          redis.expire key, expire_sec unless expire_sec.nil?
         end
-        redis.expire key, expire_sec unless expire_sec.nil?
-      end
-      self
+      end while bulk_response.nil?
+      @attributes_to_save.clear
+      @attributes_to_incr.clear
     end
 
+    def attribute_diff(attr)
+      @attributes_to_incr[attr.to_sym]
+    end
+    
     def delete
       key = hash_key
       redis.multi do
@@ -96,14 +154,16 @@ module Queris
       self
     end
 
-    def load
-      raise "Can't load #{self.class.name} with id #{id} -- model was specified as index_only, so it was never saved." if index_only
-      h = redis.hgetall hash_key
-      attributes.each do |attr_name|
-        val = h[attr_name.to_s]
-        send "#{attr_name}=", val
-        @attributes_were[attr_name] = val
+    def load(hash=nil)
+      raise "Can't load #{self.class.name} with id #{id} -- model was specified index_only, so it was never saved." if index_only
+      (hash || redis.hgetall(hash_key)).each do |attr_name, val|
+        attr = attr_name.to_sym
+        if (old_val = @attributes[attr]) != val
+          @attributes_were[attr] = old_val unless old_val.nil?
+          @attributes[attr] = val
+        end
       end
+      @loaded = true
       self
     end
 
@@ -146,7 +206,8 @@ module Queris
     def attr_hash
       @attr_hash ||= {}
       attributes.each do |attr_name|
-        @attr_hash[attr_name]=send attr_name
+        val = send attr_name, true
+        @attr_hash[attr_name]= val unless attribute_was(attr_name) == val
       end
       @attr_hash
     end
