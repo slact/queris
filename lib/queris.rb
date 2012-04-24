@@ -92,7 +92,6 @@ module Queris
   end
 
   def self.included(base)
-    return if base.include? Queris #include only once
     base.send :include, ObjectMixin
     if const_defined?('ActiveRecord') and base.superclass == ActiveRecord::Base then
       require "queris/mixin/active_record"
