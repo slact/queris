@@ -31,6 +31,9 @@ module Queris
     def skip_delete?
       @skip_delete
     end
+    def incremental?
+      false
+    end
     def val(value)
       @value.nil? ? value : @value.call(value)
     end
@@ -46,6 +49,9 @@ module Queris
     end
     def value_was(obj)
       obj.send "#{@attribute}_was"
+    end
+    def value_diff(obj)
+      obj.attribute_diff @attribute if obj.respond_to? :attribute_diff
     end
     def update(obj)
       val_is, val_was = value_is(obj), value_was(obj)
@@ -252,27 +258,31 @@ module Queris
     alias :key :sorted_set_key
     
     def update(obj)
-      val_is, val_was = value_is(obj), value_was(obj)
-      if(val_is != val_was)
+      if !(diff = value_diff(obj)).nil?
+        increment(obj, diff) unless diff == 0
+      else
+        val_is, val_was = value_is(obj), value_was(obj)
+        add(obj, val_is) unless val_is == val_was
         #removal is implicit with the way we're using sorted sets
-        add(obj)
       end
     end
+    
+    def incremental?; true; end
     
     def add(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
-      (redis || obj.redis).zadd sorted_set_key(obj.send @attribute), my_val, obj.send(@key)
+      (redis || obj.redis).zadd sorted_set_key, my_val, obj.send(@key)
     end
     
     def increment(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
-      (redis || obj.redis).zincrby sorted_set_key(obj.send @attribute), my_val, obj.send(@key)
+      (redis || obj.redis).zincrby sorted_set_key, my_val, obj.send(@key)
     end
     
     def remove(obj, value=nil)
-      (redis || obj.redis).zrem sorted_set_key(obj.send @attribute), obj.send(@key)
+      (redis || obj.redis).zrem sorted_set_key, obj.send(@key)
     end
 
     def build_query_part(command, query, value, multiplier=1)
