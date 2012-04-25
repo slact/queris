@@ -56,7 +56,7 @@ module Queris
   #rebuild all known queris indices
   def self.rebuild!(clear=false)
     start = Time.now
-    if Rails && Rails.root #if we're in rails
+    if Object.const_defined? 'Rails'
       Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
     end
     @indexed_models.each do |model| 
@@ -92,7 +92,6 @@ module Queris
   end
 
   def self.included(base)
-    return if base.include? Queris #include only once
     base.send :include, ObjectMixin
     if const_defined?('ActiveRecord') and base.superclass == ActiveRecord::Base then
       require "queris/mixin/active_record"

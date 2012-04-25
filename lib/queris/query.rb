@@ -24,7 +24,7 @@ module Queris
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.redis(:query, :slave, :master)
-      @profile = model.profile_queries? ? Queris::Profiler.new(nil, :redis => @redis) : DummyProfiler.new
+      @profile = model.profile_queries? ? Queris::QueryProfiler.new(nil, :redis => @redis || model.redis) : DummyProfiler.new
       @subquery = []
       @ttl= arg[:ttl] || 600 #10 minutes default expire
       @created_at = Time.now.utc
@@ -213,7 +213,7 @@ module Queris
         set_time_cached Time.now if track_stats?
         @profile.finish :run_time
         @profile.save
-        puts "updating quuery profile for #{structure}"
+        #puts "updating query profile for #{structure}"
       end
       if @resort #just sort
         #TODO: profile resorts
@@ -284,7 +284,7 @@ module Queris
       end
       
       @profile.finish :results_time
-      puts "updating results profile for #{structure}"
+      #puts "updating results profile for #{structure}"
       @profile.save
       res
     end
