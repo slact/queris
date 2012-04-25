@@ -34,6 +34,9 @@ module Queris
     def incremental?
       false
     end
+    def stateless?
+      true
+    end
     def val(value)
       @value.nil? ? value : @value.call(value)
     end
@@ -316,6 +319,9 @@ module Queris
   
   #a stateful index that cannot be rebuilt without losing data.
   class AccumulatorIndex < RangeIndex
+    def stateless?
+      false
+    end
     def add(obj, value=nil)
       increment(obj, value)
     end
