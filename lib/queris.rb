@@ -56,7 +56,7 @@ module Queris
   #rebuild all known queris indices
   def self.rebuild!(clear=false)
     start = Time.now
-    if Rails && Rails.root #if we're in rails
+    if Object.const_defined? 'Rails'
       Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
     end
     @indexed_models.each do |model| 
