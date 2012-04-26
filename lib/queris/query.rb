@@ -2,13 +2,6 @@
 module Queris
   class Query
     
-    class DummyProfiler
-      def method_missing(*args, &block)
-        self
-      end
-      def nil?; true; end
-    end
-    
     attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name, :model, :params
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
@@ -24,7 +17,7 @@ module Queris
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.redis(:query, :slave, :master)
-      @profile = model.profile_queries? ? Queris::QueryProfiler.new(nil, :redis => @redis || model.redis) : DummyProfiler.new
+      @profile = model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subquery = []
       @ttl= arg[:ttl] || 600 #10 minutes default expire
       @created_at = Time.now.utc

@@ -1,4 +1,14 @@
 module Queris
+  
+  #black hole, does nothing, is nil.
+  class DummyProfiler
+    def method_missing(*args)
+      self
+    end
+    def initialize(*args); end
+    def nil?; true; end
+  end
+  
   module ObjectMixin
     def self.included base
       base.extend self
@@ -43,11 +53,17 @@ module Queris
       end
     end
     
-    def profile_queries
+    def profile_queries(another_profiler)
       require "queris/profiler"
-      @profile = true
+      @profiler = case another_profiler
+      when :lite
+        Queris::QueryProfilerLite
+      else
+        Queris::QueryProfiler
+      end
     end
-    def profile_queries?; @profile; end
+    def query_profiler; @profiler || DummyProfiler; end
+    def profile_queries?; query_profiler.nil?; end
     
     def index_attribute(arg={}, &block)
       if arg.kind_of? Symbol 
