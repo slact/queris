@@ -1,5 +1,4 @@
 module Queris
-  #This is a suboptimal profiler implementation, as it requires current profile data to be loaded before it can be updated.
   class Profiler < Queris::Model
     
     class Sum

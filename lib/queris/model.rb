@@ -62,7 +62,7 @@ module Queris
     end
 
     def increment(attr_name, delta_val)
-      raise ArgumentError, "Can't increment attribute #{attr_name} because it uses at least one non-incrementable index." unless self.class.can_increment_attribute? attr_name
+      raise ArgumentError, "Can't increment attribute #{attr_name} because it is used by at least one non-incrementable index." unless self.class.can_increment_attribute? attr_name
       raise ArgumentError, "Can't increment attribute #{attr_name} by non-numeric value <#{delta_val}>. Increment only by numbers, please." unless delta_val.kind_of? Numeric
       
       @attributes_to_incr[attr_name.to_sym]=delta_val
