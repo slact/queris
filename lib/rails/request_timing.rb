@@ -6,13 +6,13 @@ module Queris
 
     def append_info_to_payload(payload)
       super
-      payload[:redis_queris_runtime] = Queris::LogSubscriber.runtime
+      payload[:redis_queris_runtime] = Queris::LogSubscriber.reset_runtime
     end
 
     module ClassMethods
       def log_process_action(payload)
         messages, queris_runtime = super, payload[:redis_queris_runtime]
-        messages << ("Queris: %.1fms" % queris_runtime.to_f) if queris_runtime
+        messages << ("Redis via Queris: %.1fms" % queris_runtime.to_f) if queris_runtime
         messages
       end
     end
