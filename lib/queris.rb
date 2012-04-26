@@ -42,6 +42,22 @@ module Queris
       @redis_by_role[role]||=[]
       @redis_by_role[role] << redis
     end
+    if Object.const_defined? 'ActiveSupport'
+      require "rails/log_subscriber"
+      
+      #the following is one ugly monkey(patch).
+      # we assume that, since we're in Railsworld, the Redis logger
+      # is up for grabs. It would be cleaner to wrap the redis client in a class, 
+      # but I'm coding dirty for brevity. 
+      # THIS MUST BE ADDRESSED IN THE FUTURE
+      
+      class << redis.client
+        protected
+        def logging(commands)
+          ActiveSupport::Notifications.instrument("command.queris") { yield }
+        end
+      end
+    end
   end
   
   
@@ -112,4 +128,9 @@ module Queris
       "#{app_name}:#{self.name}:"
     end
   end
+end
+
+#ugly rails hooks
+if Object.const_defined? 'Rails'
+  require "rails/request_timing"
 end
