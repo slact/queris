@@ -156,10 +156,14 @@ module Queris
       @profile
     end
     
+    def using_index_as_results_key?
+      !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
+    end
+    
     def query(force=nil, opt={})
       @profile.set_profile_id self
       force||=is_stale?
-      if !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
+      if using_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
@@ -235,6 +239,7 @@ module Queris
     # or flush conditionally according to passed block: flush {|query| true }
     # when no parameters or block present, flush only this query and no subqueries
     def flush(arg={})
+      return if using_index_as_results_key?
       flushed = 0
       if block_given? #efficiency hackety hack - anonymous blocs are heaps faster than bound ones
         subqueries.each { |sub| flushed += sub.flush arg, Proc.new }
