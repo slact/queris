@@ -178,13 +178,13 @@ module Queris
     
     def start(attr)
       @time_start[attr]=Time.now.to_f
-      puts "started #{attr}"#, caller
+      #puts "started #{attr}"#, caller
     end
     def finish(attr)
       start_time = @time_start[attr]
       raise "Query Profiling timing attribute #{attr} was never started." if start_time.nil?
       record attr, (Time.now.to_f - start_time)
-      puts "finished #{attr}"#, caller
+      #puts "finished #{attr}"#, caller
     end
   end
   
