@@ -101,7 +101,7 @@ module Queris
           when :geometric, :arithmetic, :mean
             Sum.new
           when :decaying, :exponential
-            DecayingSum.new(opt[:half_life] || opt[:hl] || 1209600)
+            DecayingSum.new(opt[:half_life] || opt[:hl] || opt[:halflife] || 1209600)
           else
             raise ArgumentError, "Average weighing must be one of [ geometric, decaying ]"
           end
@@ -161,7 +161,7 @@ module Queris
     end
     
     def record(attr, val)
-      send "#{attr}=", val
+      send("#{attr}=", val) if respond_to? "#{attr}="
       self
     end
     
@@ -188,28 +188,49 @@ module Queris
     end
   end
   
-  class QueryProfiler < Profiler
-    sample :cache_hit, :cache_miss
-    sample :run_time, :results_time, unit: :msec
-
-    average :geometric, :name => :avg
-    average :decaying, :name => :ema
-    
+  class QueryProfilerBase < Profiler
     def self.find(query, opt={})
       if redis.nil?
         opt[:redis]=query.model.redis
       end
-      super query, opt
+      super query_profile_id(query), opt
     end
     
     def self.query_profile_id(query)
       "#{query.model.name}:#{query.structure}"
     end
-    def query_profile_id(query)
-      self.class.query_profile_id(query)
+    def id=(query)
+      set_id self.class.query_profile_id(query), true
     end
-    def set_profile_id(query)
-      set_id query_profile_id(query), true
+  end
+  
+  class QueryProfiler < QueryProfilerBase
+    sample :cache_miss
+    sample :time, :own_time, unit: :msec
+
+    average :geometric, :name => :avg
+    average :decaying, :name => :ema
+  end
+  
+  # does not store properties in a hash, and writes only to indices.
+  # useful for Redises with crappy HINCRBYFLOAT implementations (2.6)
+  # as a result, loading stats is less efficient, but still O(1)
+  class QueryProfilerLite < QueryProfilerBase
+    average :decaying, :name => :ema, :half_life => 2629743 #1 month
+    index_only
+    def load(query=nil) #load from sorted sets through a pipeline
+      indices = self.class.redis_indices
+      res = (redis || query.model.redis).multi do |r|
+        indices.each do |index|
+          r.zscore index.sorted_set_key, id
+        end
+      end
+      indices.each do |index|
+        unless (val = res.shift).nil?
+          self.import index.name => val.to_f
+        end
+      end
+      self
     end
   end
 end

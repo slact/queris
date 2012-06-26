@@ -161,7 +161,7 @@ module Queris
     end
     
     def query(force=nil, opt={})
-      @profile.set_profile_id self
+      @profile.id=self
       force||=is_stale?
       if using_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
@@ -172,8 +172,7 @@ module Queris
 
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
         #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
-        @profile.record :cache_miss, 1 
-        @profile.start :run_time
+        @profile.start :time
         if results_key_type == 'string'
           #clear dummy key
           @redis.del results_key
@@ -183,6 +182,7 @@ module Queris
           q.query force unless opt[:use_cached_subqueries]
         end
         #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
+        @profile.start :own_time
         @redis.multi do
           [@queue, @sort_queue].each do |queue|
             first = queue.first
@@ -200,6 +200,7 @@ module Queris
           end
           #puts "QUERY TTL: @ttl"
           @redis.expire results_key, @ttl
+          @profile.finish :own_time
         end
         if (master = Queris.redis :master) != @redis && !master.nil?  #we're on a slave
           if results_key_type == 'none'
@@ -208,7 +209,7 @@ module Queris
           end
         end
         set_time_cached Time.now if track_stats?
-        @profile.finish :run_time
+        @profile.finish :time
         @profile.save
         #puts "updating query profile for #{structure}"
       end
