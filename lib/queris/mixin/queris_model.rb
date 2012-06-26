@@ -1,43 +1,45 @@
 module Queris
   module QuerisModelMixin
     def self.included(base)
-      base.extend QuerisModelMixin
-    end
-    def redis_query(arg={})
-      query = QuerisModelQuery.new self, arg.merge(:redis => redis(true))
-      yield query if block_given?
-      query
+      base.extend QuerisModelClassMixin
     end
     
-    
-    def add_redis_index(index, opt={})
-      @incremental_attr ||= {}
-      ret = super(index, opt)
-      if @incremental_attr[index.attribute].nil?
-        @incremental_attr[index.attribute] = index.incremental?
-      else
-        @incremental_attr[index.attribute] &&= index.incremental?
+    module QuerisModelClassMixin
+      def redis_query(arg={})
+        query = QuerisModelQuery.new self, arg.merge(:redis => redis(true))
+        yield query if block_given?
+        query
       end
-      ret
-    end
-    def can_increment_attribute?( attr_name )
-      @incremental_attr[attr_name.to_sym]
-    end
-    
-    def find(id, opt={})
-      new(id, opt).load
-    end
-    
-    #don't save attributes, just index them. useful at times.
-    def index_only
-      @index_only = true
-    end
-    
-    def index_attribute(arg={}, &block)
-      if arg.kind_of? Symbol 
-        arg = {:attribute => arg }
+      def add_redis_index(index, opt={})
+        #support for incremental attributes
+        @incremental_attr ||= {}
+        ret = super(index, opt)
+        if @incremental_attr[index.attribute].nil?
+          @incremental_attr[index.attribute] = index.incremental?
+        else
+          @incremental_attr[index.attribute] &&= index.incremental?
+        end
+        ret
       end
-      super arg.merge(:redis => redis), &block
+      def can_increment_attribute?( attr_name )
+        @incremental_attr[attr_name.to_sym]
+      end
+      def find(id, opt={})
+        new(id, opt).load
+      end
+      
+      private
+      #don't save attributes, just index them. useful at times.
+      def index_only
+        @index_only = true
+      end
+
+      def index_attribute(arg={}, &block)
+        if arg.kind_of? Symbol 
+          arg = {:attribute => arg }
+        end
+        super arg.merge(:redis => redis), &block
+      end
     end
   end
   

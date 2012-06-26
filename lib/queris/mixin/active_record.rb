@@ -5,39 +5,41 @@ module Queris
       base.after_create :create_redis_indices
       base.before_save :update_redis_indices
       base.before_destroy :delete_redis_indices
-      base.extend ActiveRecordMixin
-    end
-    def redis_query(arg={}, &block)
-      ActiveRecordQuery.new self, arg, &block
-    end
-    def find_all
-      find :all
+
+      def changed_cacheable_attributes
+        changed
+      end
+
+      def all_cacheable_attributes
+        attribute_names
+      end
+
+      base.extend ActiveRecordClassMixin
     end
     
-    def find_cached(id, cache_it=true)
-      #POTENTIAL OPTIMIZATION: accept Enumerable id, pipeline redis commands
-      cache = redis_index("all_attribute_hashcache", Queris::HashCache)
-      if (obj = cache.fetch(id))
-        return obj
-      elsif cache_it
-        begin
-          obj = find(id)
-        rescue
-          obj = nil
+    module ActiveRecordClassMixin
+      def redis_query(arg={}, &block)
+        ActiveRecordQuery.new self, arg, &block
+      end
+      def find_all
+        find :all
+      end
+      def find_cached(id, cache_it=true)
+        #POTENTIAL OPTIMIZATION: accept Enumerable id, pipeline redis commands
+        cache = redis_index :all_attribute_hashcache, Queris::HashCache
+        if (obj = cache.fetch(id))
+          return obj
+        elsif cache_it
+          begin
+            obj = find(id)
+          rescue
+            obj = nil
+          end
+          cache.create obj if obj
+          obj
         end
-        cache.create obj if obj
-        obj
       end
     end
-    
-    def all_cacheable_attributes
-      attribute_names
-    end
-    
-    def changed_cacheable_attributes
-      changed
-    end
-    
   end
   
   class ActiveRecordQuery < Query
