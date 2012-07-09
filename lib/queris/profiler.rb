@@ -13,6 +13,7 @@ module Queris
       def hkey(attr)
         "#{attr}:#{@key}"
       end
+      alias :attribute_name :hkey
       
       def current_value(val)
         val
@@ -57,6 +58,8 @@ module Queris
         exp_func val, -1
       end
     end
+ 
+    attr_reader :last_sample
     
     class << self
       def samples(*attrs)
@@ -69,9 +72,15 @@ module Queris
           stats.each { |_, statistic| initialize_sample_average sample_name, statistic }
           
           define_method "#{sample_name}=" do |val|
+            val = val.to_f
             self.class.stats.each do |_, statistic|
-              increment sample_name, val.to_f
+              increment sample_name, val
             end
+            if @sample_saved
+              @last_sample.clear
+              @sample_saved = nil
+            end
+            @last_sample[sample_name]=val
           end
           
           define_method sample_name do |stat_name|
@@ -139,6 +148,7 @@ module Queris
       
     def initialize(*arg)
       @time_start={}
+      @last_sample={}
       super *arg
     end
     
@@ -151,7 +161,10 @@ module Queris
     
     def save(*arg)
       increment :n, 1 unless self.class.sample[:n].nil?
-      super
+      if (result = super)
+        @sample_saved = true
+      end
+      result
     end
     
     def load
@@ -161,7 +174,11 @@ module Queris
     end
     
     def record(attr, val)
-      send("#{attr}=", val) if respond_to? "#{attr}="
+      if respond_to? "#{attr}="
+        send("#{attr}=", val)
+      else
+        raise "Attempting to time an undeclared sampling attribute #{attr}"
+      end
       self
     end
     
@@ -178,14 +195,16 @@ module Queris
     
     def start(attr)
       @time_start[attr]=Time.now.to_f
-      puts "started #{attr}"#, caller
     end
     def finish(attr)
       start_time = @time_start[attr]
       raise "Query Profiling timing attribute #{attr} was never started." if start_time.nil?
+      t = Time.now.to_f - start_time
+      @time_start[attr]=nil
+
       record attr, (Time.now.to_f - start_time)
-      puts "finished #{attr}"#, caller
     end
+    
   end
   
   class QueryProfilerBase < Profiler
@@ -199,8 +218,9 @@ module Queris
     def self.query_profile_id(query)
       "#{query.model.name}:#{query.structure}"
     end
-    def id=(query)
-      set_id self.class.query_profile_id(query), true
+    def set_id(query, *rest)
+      @query = query
+      set_id self.class.query_profile_id(query, *rest), true
     end
   end
   
@@ -210,18 +230,37 @@ module Queris
 
     average :geometric, :name => :avg
     average :decaying, :name => :ema
+    
+    def self.profile(query, opt={})
+      tab = "  "
+      unless query.subqueries.empty?
+        query.explain :terse_subquery_ids => true
+      end
+    end
+    
+    
+    def profile
+      self.cass.profile @query
+    end
   end
   
   # does not store properties in a hash, and writes only to indices.
-  # useful for Redises with crappy HINCRBYFLOAT implementations (2.6)
-  # as a result, loading stats is less efficient, but still O(1)
+  # useful for Redises with crappy or no HINCRBYFLOAT implementations (<=2.6)
+  # as a result, loading stats is suboptimal, but still O(1)
   class QueryProfilerLite < QueryProfilerBase
+    sample :cache_miss
+    sample :time, :own_time, unit: :msec
+
     average :decaying, :name => :ema, :half_life => 2629743 #1 month
+
     index_only
+
     def load(query=nil) #load from sorted sets through a pipeline
-      indices = self.class.redis_indices
+      stats = self.class.stats
+      #The following code SHOULD, in some future, load attributes
+      # through self.class.stats. For now loading all zsets will do.
       res = (redis || query.model.redis).multi do |r|
-        indices.each do |index|
+        stats.each do |_, statistic|
           r.zscore index.sorted_set_key, id
         end
       end
