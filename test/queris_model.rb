@@ -6,7 +6,7 @@ class Foo < Queris::Model
   attrs :a, :b, :c
   redis Redis.new(:host => 'localhost', :port => 6379, :db => 13)
   index_attributes :a, :b, :index => Queris::DecayingAccumulatorIndex, :half_life => 604800
-  profile_queries
+  profile_queries :lite
 end
 
 def test
@@ -17,7 +17,7 @@ def test
   
   q = Foo.query.union(:a, 11).diff(:a, 12)
   
-  pr = Queris::QueryProfiler.find(q)
+  pr = Queris::QueryProfilerLite.find(q)
   
   binding.pry
 end

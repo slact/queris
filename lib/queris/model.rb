@@ -1,4 +1,5 @@
 module Queris
+  
   class Model
     attr_reader :id
     include Queris #this doesn't trigger Queris::included as it seems it ought to...
