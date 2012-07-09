@@ -303,13 +303,17 @@ module Queris
       end
     end
     
-    def first_result
-      res = results(0...1)
+    def result(n)
+      res = results(n...n+1)
       if res.length > 0 
         res.first
       else
         nil
       end
+    end
+    
+    def first_result
+      return result 0
     end
     
     def results_key
