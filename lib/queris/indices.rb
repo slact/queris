@@ -1,3 +1,4 @@
+require "securerandom"
 module Queris
   class Index
     attr_accessor :name, :redis, :model, :attribute
@@ -160,7 +161,11 @@ module Queris
     end
     
     def set_key(value, prefix=nil, raw_val=false)
-      (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, raw_val ? value : digest(val value)]
+      if Enumerable === value
+        value.map { |val| set_key val, prefix, raw_val }
+      else
+        (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, raw_val ? value : digest(val value)]
+      end
     end
     alias :key :set_key
     
@@ -180,21 +185,8 @@ module Queris
         (redis || obj.redis).srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
       end
     end
-
-    def build_query_part(command, query, value, multiplier=nil)
-      ret = []
-      if value.kind_of? Enumerable
-        sub = query.subquery
-        value.to_a.uniq.each {|val| sub.union self, val }
-        set_key = sub.results_key
-      else
-        set_key = set_key(value)
-      end
-      ret.push :command => command, :key => set_key, :weight => multiplier
-      ret
-    end
   end
-  
+
   class ForeignIndex < SearchIndex
     attr_accessor :real_index
     def initialize(arg)
@@ -207,9 +199,7 @@ module Queris
     def set_key(*arg)
       @real_index.set_key(*arg)
     end
-    def build_query_part(*arg)
-      @real_index.build_query_part *arg
-    end
+
     def method_missing(method)
       @real_index.method
     end
@@ -246,7 +236,7 @@ module Queris
   end
   
   
-  # The power of sorted sets
+  # The power, and occasional awkwardness, of sorted sets
   class RangeIndex < SearchIndex
     def initialize(arg)
       @value ||= proc { |x| x.to_f }
@@ -256,7 +246,7 @@ module Queris
       @value.call val, obj
     end
     def sorted_set_key(val=nil, prefix=nil, raw_val=false)
-      (@keyf) %[prefix || @model.redis_prefix, "(...)"]
+      @temp_key || (@keyf) %[prefix || @model.redis_prefix, "(...)"]
     end
     alias :key :sorted_set_key
     
@@ -283,37 +273,32 @@ module Queris
       my_val = val(value || value_is(obj), obj)
       (redis || obj.redis).zincrby sorted_set_key, my_val, obj.send(@key)
     end
-    
+
     def remove(obj, value=nil)
       (redis || obj.redis).zrem sorted_set_key, obj.send(@key)
     end
 
-    def build_query_part(command, query, value, multiplier=1)
-      case value
-      when Range
-        range command, query, val(value.begin), val(value.end), true, value.exclude_end?, nil, multiplier
-      when Enumerable
-        raise ArgumentError, "RangeIndex doesn't accept non-Range Enumerables"
-      when NilClass
-        range command, query, nil, nil, false, false, false, multiplier
-      else
-        float_val = val(value)
-        range command, query, float_val, float_val, true, true, nil, multiplier
-      end
+    def before_query_op(redis, results_key, val, op=nil)
+      #copy to temp key
+      temp = "#{results_key}:temp:#{SecureRandom.hex}"
+      redis.zunionstore temp, [ key ]
+      val = (val..val) unless Enumerable === val
+      remove_inverse_range redis, temp, val
+      @temp_key = temp
+    end
+    def after_query_op(redis, results_key, val, op=nil)
+      redis.del @temp_key
+      @temp_key = nil
     end
     private
-    def range(command, query, min=nil, max=nil, exclude_min=nil, exclude_max=nil, range_only=nil, multiplier=1)
-      key, ret = sorted_set_key, []
-      inf = 1.0/0
-      min = nil if min == -inf
-      max = nil if max == inf
-      min_param, max_param = "#{exclude_min ? "(" : nil}#{min.to_f}", "#{exclude_max ? "(" : nil}#{max.to_f}"
-      ret << {:command => command, :key => key, :weight => multiplier, :inflexible => true} unless range_only
-      ret <<  {:command => :zremrangebyscore, :arg => ['-inf', min_param]} unless min.nil?
-      ret << {:command => :zremrangebyscore, :arg => [max_param, 'inf']} unless max.nil?
-      ret
+    def remove_inverse_range(redis, key, val)
+      if (val.first < val.last)
+        redis.zremrangebyscore key, '-inf', "(#{val.begin}" unless val.begin == -Float::INFINITY
+        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{val.end}", 'inf' unless val.end == Float::INFINITY
+      else
+        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{val.end}", "(#{val.begin}"
+      end
     end
-
   end
   
   

@@ -1,8 +1,10 @@
 # encoding: utf-8
+require 'json'
+
 module Queris
   class Query
     
-    attr_accessor :redis_prefix, :ttl, :created_at, :sort_queue, :sort_index_name, :model, :params
+    attr_accessor :redis_prefix, :ttl, :created_at, :ops, :sort_ops, :model, :params, :used_index
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
         arg, model = model, model[:model]
@@ -12,13 +14,14 @@ module Queris
       raise "include Queris in your model (#{model.inspect})." unless model.include? Queris
       @model = model
       @params = {}
-      @queue, @sort_queue = [], []
-      @used_index={}
+      @ops = []
+      @sort_ops = []
+      @used_index = {}
       @explanation = []
       @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
       @redis=arg[:redis] || Queris.redis(:query, :slave, :master)
       @profile = model.query_profiler.new(nil, :redis => @redis || model.redis)
-      @subquery = []
+      @subqueries = []
       @ttl= arg[:ttl] || 600 #10 minutes default expire
       @created_at = Time.now.utc
       if expire = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
@@ -76,100 +79,109 @@ module Queris
     def param(param_name)
       @params[param_name.to_sym]
     end
-    
+
+    #the set operations
     def union(index, val=nil)
-      index = use_index index  #accept string index names and indices and queries
-      set_param_from_index index, val
-      @results_key = nil
-      push_commands index.build_query_part(:zunionstore, self, val, 1)
-      push_explanation :union, index, val.to_s
+      prepare_op UnionOp, index, val
     end
-    
     def intersect(index, val=nil)
+      prepare_op IntersectOp, index, val
+    end
+    def diff(index, val=nil)
+      prepare_op DiffOp, index, val
+    end
+
+    def prepare_op(op_class, index, val)
       index = use_index index  #accept string index names and indices and queries
       set_param_from_index index, val
       @results_key = nil
-      push_commands index.build_query_part(:zinterstore, self, val, 1)
-      push_explanation :intersect, index, val.to_s
-    end
-    
-    def diff(index, val=nil)
-      index = use_index(index) #accept string index names and indices and queries
-      set_param_from_index index, val
-      @results_key = nil
-      
-      #UGLY HACK ALERT. 
-      #this doubtfully belongs here. But our Sorted Set diff is a bit of a hack anyway, so...
-      if val.kind_of?(Range) && (index.kind_of?(ForeignIndex) ? index.real_index : index).kind_of?(RangeIndex)
-        sub = subquery.union(index, val)
-        push_commands sub.build_query_part(:zunionstore, self, val, "-inf")
+      op = op_class.new
+      last_op = ops.last
+      if last_op && !op.fragile && !last_op.fragile && last_op.class == op_class
+        last_op.push index, val
       else
-        push_commands index.build_query_part(:zunionstore, self, val, "-inf")
+        op.push index, val
+        ops << op
       end
-      push_command :zremrangebyscore , :arg =>['-inf', '-inf']
-      push_explanation :diff, index, val.to_s
+      self
     end
-    
+    private :prepare_op
+
     def sort(index, reverse = nil)
       # accept a minus sign in front of index name to mean reverse
-      if index.kind_of?(Query)
+      @results_key = nil
+      if Query === index
         raise "sort can be extracted only from query using the same model..." unless index.model == model
         sort_query = index
-        if sort_query.sorting_by.nil?
+        if sort_query.sort_ops.empty?
           index = nil
-        else
-          index = sort_query.sort_index_name
-          sort_query.sort nil #unsort sorted query
+        else #copy sort from another query
+          sort_query.sort_ops.each do |op|
+            op.each {|operand| use_index operand.index}
+          end
+          self.sort_ops = sort_query.sort_ops.dup
+          # sort_query.sort false #unsort sorted query - legacy behavior, probably a bad idea
         end
+        return self
       end
       if index.respond_to?('[]') && index[0] == '-'
         reverse, index = true, index[1..-1]
       end
-      if index.nil?
-        @sort_queue = []
-        @sort_index_name = nil
-      else
+      if index
         index = use_index index #accept string index names and indices and queries
-        if not index.kind_of? ForeignIndex
-          raise Exception, "Must have a RangeIndex for sorting" unless index.kind_of? RangeIndex
-        end
-        @results_key = nil
-        @sort_queue = index.build_query_part(:zinterstore, self, nil, reverse ? -1 : 1)
-        @sort_index_name = "#{reverse ? '-' : ''}#{index.name}".to_sym
+        real_index = ForeignIndex === index ? index.real_index : index
+        raise Exception, "Must have a RangeIndex for sorting, found " unless RangeIndex === real_index
+        self.sort_ops.clear << SortOp.new.push(index, reverse)
+      else
+        self.sort_ops.clear
       end
       self
     end
     
-    def sorting_by? what
-      @sort_index_name == what.to_sym
-    end
-    def sorting_by
-      @sort_index_name
+    def sorting_by? index
+      if (index=@model.redis_index(*arg))
+        sort_ops.each do |op|
+          op.operands.each { |o| return true if o.index == index }
+        end
+      end
+      nil
     end
     
+    def sorting_by
+      sorting = sort_ops.map do |op|
+        op.operands.map{|o| "#{(o.value < 0) ? '-' : ''}#{o.index.name}" }.join('*')
+      end.join('*')
+      sorting.empty? ? nil : sorting
+    end
+
     def resort #apply a sort to set of existing results
       @resort=true
       self
     end
-    
-    def profiler 
+
+    def profiler
       @profile
     end
-    
+
     def using_index_as_results_key?
-      !@queue.empty? && !@queue.first[:key].empty? && results_key == @queue.first[:key].first
+      if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
+        first_index = ops.first.operands.first.index
+        unless first_index.respond_to?(:before_query_op) || first_index.respond_to?(:after_query_op)
+          true
+        end
+      end
+      nil
     end
-    
+
     def query(force=nil, opt={})
       @profile.id=self
       force||=is_stale?
       if using_index_as_results_key?
-        #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
+        puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
         set_time_cached Time.now if track_stats?
       elsif force || (results_key_type = @redis.type(results_key))[-3..-1] != 'set'
-
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
         #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
         @profile.start :time
@@ -178,30 +190,20 @@ module Queris
           @redis.del results_key
         end
         
-        @subquery.each do |q|
+        @subqueries.each do |q|
           q.query force unless opt[:use_cached_subqueries]
         end
         #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
         @profile.start :own_time
-        @redis.multi do
-          [@queue, @sort_queue].each do |queue|
-            first = queue.first
-            queue.each do |cmd|
-              if cmd[:subquery] 
-                if !cmd[:subquery_id] || !(subquery = @subquery[cmd[:subquery_id]])
-                  raise "Unable to process query #{id}: expected subquery #{cmd[:subquery_id] || "<unknown>"} missing."
-                end
-                raise "Can't transform redis command for subquery: no idea where the key should be placed..." unless cmd[:key]
-                raise "Invalid redis command containing subquery..." unless cmd[:key].count == 1
-                cmd[:key] = [ subquery.results_key ]
-              end
-              send_command cmd, results_key, (queue==@queue && first==cmd)
-            end
-          end
+        @redis.multi do |pipelined_redis|
+        pipelined_redis = @redis
+          first_op = ops.first
+          ops.each { |op| op.run pipelined_redis, results_key, first_op == op }
+          sort_ops.each { |op| op.run pipelined_redis, results_key }
           #puts "QUERY TTL: @ttl"
-          @redis.expire results_key, @ttl
-          @profile.finish :own_time
+          pipelined_redis.expire results_key, @ttl
         end
+        @profile.finish :own_time
         if (master = Queris.redis :master) != @redis && !master.nil?  #we're on a slave
           if results_key_type == 'none'
             master.setnx results_key, '' #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
@@ -216,8 +218,8 @@ module Queris
       if @resort #just sort
         #TODO: profile resorts
         #puts "QUERY #{explain} resort"
-        @redis.multi do
-          @sort_queue.each { |cmd| send_command cmd, results_key }
+        @redis.multi do |predis|
+           sort_ops.each { |op| op.run predis, results_key }
         end
       end
       #puts "QUERY #{explain} ttl #{@redis.ttl results_key} (should be #{@ttl})"
@@ -318,14 +320,15 @@ module Queris
     
     def results_key
       if @results_key.nil?
-        if !@queue.empty? && @queue.length == 1 && @sort_queue.empty? && @queue.first[:key].length == 1 && [:sunionstore, :sinterstore, :zunionstore, :zinterstore].member?(@queue.first[:command]) && (reused_set_key = @queue.first[:key].first) && @redis.type(reused_set_key)=='set'
-          @results_key = @queue.first[:key].first
+        if using_index_as_results_key? && (reused_set_key = ops.first.operands.first.key) && 
+          @results_key = reused_set_key
         else
-          @results_key ||= "#{@redis_prefix}results:" << digest(explain :subqueries => false) << ":subqueries:#{(@subquery.length > 0 ? @subquery.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{@sort_index_name || 'nothing'}"
+          @results_key ||= "#{@redis_prefix}results:" << digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}"
         end
       end
       @results_key
     end
+    alias :key :results_key
     
     def id
       digest results_key
@@ -351,54 +354,70 @@ module Queris
       @results_key = nil
       if arg.kind_of? Query
         subq = arg
-        subq.use_redis @redis
       else
         subq = self.class.new((arg[:model] or model), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
       end
-      @subquery << subq
-      @subquery.last
+      subq.use_redis @redis
+      @subqueries << subq
+      @subqueries.last
     end
     def subquery_id(subquery)
-      @subquery.index subquery
+      @subqueries.index subquery
     end
     
     def subqueries
-      @subquery
+      @subqueries
     end
     
     def explain(opt={})
-      explaining = @explanation.map do |part| #subqueries!
-        part = part.to_s
-        if opt[:subqueries]!=false && (match = part.match(/(?<op>.*){subquery (?<id>\d+)}$/))
-          "#{match[:op]}#{@subquery[match[:id].to_i].explain(opt)}"
-        elsif opt[:structure]
-          part.sub!(/<.*>$/, "") || part
-        else
-          part
+      return "(∅)" if ops.empty?
+      first_op = ops.first
+      r = ops.map do |op|
+        operands = op.operands.map do |o|
+          if Query === o.index
+            if opt[:subqueries] != false 
+              o.index.explain opt
+            else
+              "{subquery #{subquery_id o.index}}"
+            end
+          else
+            value = case opt[:serialize]
+            when :json
+              JSON.dump o.value
+            when :ruby
+              Marshal.dump o.value
+            else #human-readable and sufficiently unique
+              o.value.to_s
+            end
+            "#{o.index.name}#{(value.empty? || opt[:structure])? nil : "<#{value}>"}"
+          end
         end
+        op_str = operands.join " #{op.symbol} "
+        if first_op == op
+          op_str.prepend "∅ #{op.symbol} " if DiffOp === op
+        else
+          op_str.prepend " #{op.symbol} "
+        end
+        op_str
       end
-      if explaining.empty?
-        "(∅)"
-      else
-        "(#{explaining.join ' '})"
-      end
+      "(#{r.join})"
     end
     
     def structure
       explain :structure => true
     end
     
-    def info(indent="")
+    def info(indent="", output = true)
       info =  "#{indent}key: #{results_key}\r\n"
       info << "#{indent}id: #{id}, ttl: #{@ttl}, sort: #{sorting_by || "none"}\r\n"
       info << "#{indent}#{explain}\r\n"
-      if !@subquery.empty?
+      if !@subqueries.empty?
         info << "#{indent}subqueries:\r\n"
-        @subquery.each do |sub|
-          info << sub.info(indent + "  ")
+        @subqueries.each do |sub|
+          info << sub.info(indent + "  ", false)
         end
       end
-      info
+      output ? puts(info) : info
     end
     
     def marshal_dump
@@ -419,17 +438,110 @@ module Queris
       @redis ||= Queris.redis :query, :slave, :master
     end
 
-    def build_query_part(command, query, val=nil, multiplier = 1)
-      query.subquery(self) unless query.subquery_id(self)
-      [{ :command => command, :subquery => true, :subquery_id => query.subquery_id(self), :key =>false , :weight => multiplier }]
-    end
-
     private
+    class Op #query operation
+      class Operand #boilerplate
+        attr_accessor :index, :value
+        def initialize(op_index, val)
+          @index = op_index
+          @value = val
+        end
+      end
+
+      attr_accessor :operands, :fragile
+      def initialize(fragile=false)
+        @operands = []
+        @keys = []
+        @weights = []
+        @fragile = fragile
+      end
+      def push(index, val) # push operand
+        @ready = nil
+        @operands << Operand.new(index,val)
+        self
+      end
+      def symbol
+        @symbol || self.class::SYMBOL
+      end
+      def command
+        @command || self.class::COMMAND
+      end
+      def keys(target_key, first = nil)
+        prepare
+        @keys[0]=target_key
+        first ? @keys[1..-1] : @keys
+      end
+      def weights(first = nil)
+        prepare
+        first ? @weights[1..-1] : @weights
+      end
+      def target_key_weight
+        1
+      end
+      def operand_key_weight(op)
+        1
+      end
+      def prepare
+        return if @ready
+        @keys, @weights = [:result_key], [target_key_weight]
+        operands.each do |op|
+          k = op.index.key op.value
+          num_keys = @keys.length
+          if Array === k
+            @keys |= k
+          else
+            @keys << k
+          end
+          @weights += [ operand_key_weight(op) ] * (@keys.length - num_keys)
+        end
+        @ready = true
+      end
+      def run(redis, target, first=false)
+        puts "before send #{self.class.name}"
+        operands.each { |op| op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op }
+        puts "SEND #{self.class::COMMAND},  #{target}, #{keys(target)}"
+        redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
+        puts "after send #{self.class.name}"
+        operands.each { |op| op.index.after_query_op(redis, target, op.value, op) if op.index.respond_to? :after_query_op }
+      end
+    end
+    
+      
+    class UnionOp < Op
+      COMMAND = :zunionstore
+      SYMBOL = :'∪'
+    end
+    class IntersectOp < Op
+      COMMAND = :zinterstore
+      SYMBOL = :'∩'
+    end
+    class DiffOp < Op
+      COMMAND = :zunionstore
+      SYMBOL = :'∖'
+      def target_key_weight; 0; end
+      def operand_key_weight(op=nil); :'-inf'; end
+      def run(redis, result_key, first=nil)
+        super redis, result_key, first=nil
+        redis.zremrangebyscore result_key, :'-inf', :'-inf'
+        # BUG: sorted sets with -inf scores will be treated incorrectly when diffing
+      end
+    end
+    class SortOp < Op
+      COMMAND = :zinterstore
+      SYMBOL = :sortby
+      def push(index, reverse=nil)
+        super(index, reverse ? -1 : 1)
+      end
+      def target_key_weight; 0; end
+      def operand_key_weight(op); 1; end
+    end
+    
     def use_index *arg
       if (res=@model.redis_index(*arg)).nil?
         raise ArgumentError, "Invalid Queris index (#{arg.inspect}) passed to query. May be a string (index name), an index, or a query."
       else
         @used_index[res.name.to_sym]=true if res.respond_to? :name
+        subquery res if Query === res
         res
       end
     end
@@ -438,85 +550,6 @@ module Queris
       index = use_index index
       @params[index.name]=val if index.respond_to? :name
       val
-    end
-    
-    def push_explanation(operation, index, value)
-      #set operation
-      if !@explanation.empty?
-        case operation
-        when :diff
-          op= "∖ "
-        when :intersect
-          op= "∩ "
-        when :union
-          op= "∪ "
-        end
-      elsif operation == :diff
-        op = "∅ ∖ "
-      else
-        op = ""
-      end
-
-      #index and value
-      if index.kind_of? Query #we take this roundabout route because subqueries can be altered
-        s = "{subquery #{subquery_id index}}"
-      else
-        s = "#{index.name}#{!value.to_s.empty? ? '<' + value.to_s + '>' : nil}"
-      end
-      
-      @explanation << "#{op}#{s}".to_sym #because symbols are immutable
-      self
-    end
-  
-    def push_command(*args)
-      if args.first.respond_to? :to_sym
-        cmd, arg =  args.first, args[1]
-      else
-        cmd = args.first[:command]
-        arg = args.first
-      end
-      raise "command must be symbol-like" unless cmd.respond_to? :to_sym
-      cmd = cmd.to_sym
-      last = @queue.last
-      if arg[:inflexible] || @queue.length == 0 || last[:inflexible] || last[:command]!=cmd || last[:subquery] || arg[:subquery] || !([:zinterstore, :zunionstore].member? cmd)
-        last = { :command => cmd, :key =>[], :weight => [] }
-        @queue.push last
-      end
-      
-      unless arg[:key].nil?
-        last[:key] << arg[:key]
-        last[:weight] << arg[:weight] || 0
-      end
-      last[:arg] = arg[:arg]
-      [:subquery, :subquery_id].each do |param|
-        if last[param].kind_of? Enumerable
-          if arg[param].kind_of? Enumerable
-            last[param] += arg[param]
-          else
-            last[param] << val || 0
-          end
-        else
-          last[param] = arg[param]
-        end
-      end
-      self
-    end
-    
-    def push_commands (arr)
-      arr.each {|x| push_command x}
-      self
-    end
-
-    def send_command(cmd, set_key, is_first=false)
-      if [:zinterstore, :zunionstore].member? cmd[:command]
-        if is_first
-          @redis.send cmd[:command], set_key, cmd[:key], :weights => cmd[:weight]
-        else
-          @redis.send cmd[:command], set_key, (cmd[:key].kind_of?(Array) ? cmd[:key] : [cmd[:key]]) + [set_key], :weights => (cmd[:weight].kind_of?(Array) ? cmd[:weight] : [cmd[:weight]]) + [0]
-        end
-      else
-        @redis.send cmd[:command], set_key, *cmd[:arg]
-      end
     end
     
     def digest(value)
