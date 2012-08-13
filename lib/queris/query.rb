@@ -206,7 +206,6 @@ module Queris
         #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
         @profile.start :own_time
         @redis.multi do |pipelined_redis|
-        pipelined_redis = @redis
           first_op = ops.first
           ops.each { |op| op.run pipelined_redis, results_key, first_op == op }
           sort_ops.each { |op| op.run pipelined_redis, results_key }
