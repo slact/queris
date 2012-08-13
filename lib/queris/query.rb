@@ -254,7 +254,7 @@ module Queris
       return if using_index_as_results_key?
       flushed = 0
       if block_given? #efficiency hackety hack - anonymous blocs are heaps faster than bound ones
-        subqueries.each { |sub| flushed += sub.flush arg, Proc.new }
+        subqueries.each { |sub| flushed += sub.flush arg, &Proc.new }
       elsif arg.count>0
         subqueries.each { |sub| flushed += sub.flush arg }
       end
