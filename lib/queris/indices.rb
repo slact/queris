@@ -296,11 +296,12 @@ module Queris
     end
     private
     def remove_inverse_range(redis, key, val)
-      if (val.first < val.last)
-        redis.zremrangebyscore key, '-inf', "(#{val.begin}" unless val.begin == -Float::INFINITY
-        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{val.end}", 'inf' unless val.end == Float::INFINITY
+      first, last = val.begin.to_f, val.end.to_f
+      if (first < last)
+        redis.zremrangebyscore key, '-inf', "(#{first}" unless first == -Float::INFINITY
+        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{last}", 'inf' unless last == Float::INFINITY
       else
-        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{val.end}", "(#{val.begin}"
+        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{last}", "(#{first}"
       end
     end
   end
