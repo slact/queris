@@ -38,6 +38,10 @@ module Queris
     def stateless?
       true
     end
+    #can the index correctly be ranged over many values for q query?
+    def handle_range?
+      false
+    end
     def val(value)
       @value.nil? ? value : @value.call(value)
     end
@@ -261,7 +265,7 @@ module Queris
     end
     
     def incremental?; true; end
-    
+    def handle_range?; true; end
     def add(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
       #obj_id = obj.send(@key)
