@@ -105,7 +105,7 @@ module Queris
     def create(obj)
       if @attriute.nil?
         cache_attributes obj, obj.all_cacheable_attributes
-      elsif not (attr_val=obj.call(@attribute)).nil?
+      elsif not obj.call(@attribute).nil?
         cache_attributes obj, @attribute => send(@attribute)
       end
       
