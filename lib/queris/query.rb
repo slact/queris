@@ -338,7 +338,9 @@ module Queris
       end
       @results_key
     end
-    alias :key :results_key
+    def key arg=nil
+      results_key
+    end
     
     def id
       digest results_key
@@ -361,6 +363,7 @@ module Queris
 
     
     def subquery arg={}
+      @used_subquery ||= {}
       @results_key = nil
       if arg.kind_of? Query
         subq = arg
@@ -368,8 +371,11 @@ module Queris
         subq = self.class.new((arg[:model] or model), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
       end
       subq.use_redis @redis
-      @subqueries << subq
-      @subqueries.last
+      unless @used_subquery[subq]
+        @used_subquery[subq]=true
+        @subqueries << subq
+      end
+      subq
     end
     def subquery_id(subquery)
       @subqueries.index subquery
