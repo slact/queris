@@ -140,6 +140,9 @@ module Queris
         model.send(:index_attribute_for, arg.merge(:model => self))
       end
       def index_range_attribute(arg)
+        if arg.kind_of? Symbol 
+          arg = {:attribute => arg }
+        end
         index_attribute arg.merge :index => Queris::RangeIndex
       end
       def index_range_attributes(*arg)
