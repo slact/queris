@@ -177,9 +177,10 @@ module Queris
 
     def using_index_as_results_key?
       if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
-        first_index = ops.first.operands.first.index
+        first_op = ops.first.operands.first
+        first_index = first_op.index
         unless first_index.respond_to?(:before_query_op) || first_index.respond_to?(:after_query_op)
-          true
+          return first_index.key first_op.value
         end
       end
       nil
@@ -331,7 +332,7 @@ module Queris
     
     def results_key
       if @results_key.nil?
-        if using_index_as_results_key? && (reused_set_key = ops.first.operands.first.key) && 
+        if (reused_set_key = using_index_as_results_key?)
           @results_key = reused_set_key
         else
           @results_key ||= "#{@redis_prefix}results:" << digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}"
