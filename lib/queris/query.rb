@@ -93,7 +93,9 @@ module Queris
 
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
-
+      if ForeignIndex === index
+        return prepare_op op_class, index.real_index, val
+      end
       #set range and enumerable hack
       if op_class != UnionOp && ((Range === val && !index.handle_range?) || (Enumerable === val &&  !(Range === val)))
         #wrap those values in a union subquery
