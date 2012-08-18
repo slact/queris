@@ -93,9 +93,9 @@ module Queris
 
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
-      if ForeignIndex === index
-        return prepare_op op_class, index.real_index, val
-      end
+      #if ForeignIndex === index
+      #  return prepare_op op_class, index.real_index, val
+      #end
       #set range and enumerable hack
       if op_class != UnionOp && ((Range === val && !index.handle_range?) || (Enumerable === val &&  !(Range === val)))
         #wrap those values in a union subquery
@@ -142,7 +142,7 @@ module Queris
       if index
         index = use_index index #accept string index names and indices and queries
         real_index = ForeignIndex === index ? index.real_index : index
-        raise Exception, "Must have a RangeIndex for sorting, found " unless RangeIndex === real_index
+        raise ArgumentError, "Must have a RangeIndex for sorting, found #{real_index.class.name}" unless RangeIndex === real_index
         self.sort_ops.clear << SortOp.new.push(index, reverse)
       else
         self.sort_ops.clear

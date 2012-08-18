@@ -203,6 +203,9 @@ module Queris
     def set_key(*arg)
       @real_index.set_key(*arg)
     end
+    def key(*arg)
+      @real_index.key(*arg)
+    end
 
     def method_missing(method)
       @real_index.method
