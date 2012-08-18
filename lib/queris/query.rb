@@ -123,7 +123,7 @@ module Queris
       # accept a minus sign in front of index name to mean reverse
       @results_key = nil
       if Query === index
-        raise "sort can be extracted only from query using the same model..." unless index.model == model
+        raise ArgumentError, "sort can be extracted only from query using the same model..." unless index.model == model
         sort_query = index
         if sort_query.sort_ops.empty?
           index = nil
