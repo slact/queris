@@ -196,7 +196,7 @@ module Queris
       @profile.id=self
       force||=is_stale?
       if using_index_as_results_key?
-        puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
+        #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
         set_time_cached Time.now if track_stats?
@@ -231,16 +231,13 @@ module Queris
         set_time_cached Time.now if track_stats?
         @profile.finish :time
         @profile.save
-        #puts "updating query profile for #{structure}"
       end
       if @resort #just sort
         #TODO: profile resorts
-        #puts "QUERY #{explain} resort"
         @redis.multi do |predis|
            sort_ops.each { |op| op.run predis, results_key }
         end
       end
-      #puts "QUERY #{explain} ttl #{@redis.ttl results_key} (should be #{@ttl})"
       self
     end
     alias :run :query
@@ -303,7 +300,6 @@ module Queris
       end
       
       @profile.finish :results_time
-      #puts "updating results profile for #{structure}"
       @profile.save
       res
     end
@@ -574,11 +570,8 @@ module Queris
         @ready = true
       end
       def run(redis, target, first=false)
-        puts "before send #{self.class.name}"
         operands.each { |op| op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op }
-        puts "SEND #{self.class::COMMAND},  #{target}, #{keys(target)}"
         redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
-        puts "after send #{self.class.name}"
         operands.each { |op| op.index.after_query_op(redis, target, op.value, op) if op.index.respond_to? :after_query_op }
       end
 
