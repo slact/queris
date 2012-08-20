@@ -10,8 +10,8 @@ require "queris/model"
 # Queris is a querying and indexing tool for various Ruby objects.
 module Queris
   
-  @indexed_models = []
-  
+  @models = []
+  @model_lookup={}
   @redis_connections=[]
   @redis_by_role={}
   
@@ -73,7 +73,7 @@ module Queris
     if Object.const_defined? 'Rails'
       Dir.glob("#{Rails.root}/app/models/*.rb").sort.each { |file| require_dependency file } #load all models
     end
-    @indexed_models.each do |model| 
+    @models.each do |model| 
       if clear
         delkeys = redis.keys "#{model.redis_prefix}*"
         deleted = redis.del(*delkeys) unless delkeys.count == 0
@@ -90,7 +90,14 @@ module Queris
   end
   
   def self.register_model(model)
-    @indexed_models << model unless @indexed_models.member? model
+    unless @models.member? model
+      @models << model
+      @model_lookup[model.name.to_sym]=model
+    end
+  end
+  
+  def self.model(model_name)
+    @model_lookup[model_name.to_sym]
   end
   
   #OBSOLETE
