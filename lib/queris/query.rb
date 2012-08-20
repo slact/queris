@@ -124,29 +124,31 @@ module Queris
       # accept a minus sign in front of index name to mean reverse
       @results_key = nil
       if Query === index
-        raise ArgumentError, "sort can be extracted only from query using the same model..." unless index.model == model
+        raise ArgumentError, "Sort can't be extracted from queries over different models." unless index.model == model
         sort_query = index
         if sort_query.sort_ops.empty?
           index = nil
         else #copy sort from another query
           sort_query.sort_ops.each do |op|
-            op.each {|operand| use_index operand.index}
+            op.operands.each do |operand| 
+              use_index operand.index unless Query === index
+            end
           end
           self.sort_ops = sort_query.sort_ops.dup
-          # sort_query.sort false #unsort sorted query - legacy behavior, probably a bad idea
+          sort_query.sort false #unsort sorted query - legacy behavior, probably a bad idea in the long run
         end
-        return self
-      end
-      if index.respond_to?('[]') && index[0] == '-'
-        reverse, index = true, index[1..-1]
-      end
-      if index
-        index = use_index index #accept string index names and indices and queries
-        real_index = ForeignIndex === index ? index.real_index : index
-        raise ArgumentError, "Must have a RangeIndex for sorting, found #{real_index.class.name}" unless RangeIndex === real_index
-        self.sort_ops.clear << SortOp.new.push(index, reverse)
       else
-        self.sort_ops.clear
+        if index.respond_to?('[]') && index[0] == '-'
+          reverse, index = true, index[1..-1]
+        end
+        if index
+          index = use_index index #accept string index names and indices and queries
+          real_index = ForeignIndex === index ? index.real_index : index
+          raise ArgumentError, "Must have a RangeIndex for sorting, found #{real_index.class.name}" unless RangeIndex === real_index
+          self.sort_ops.clear << SortOp.new.push(index, reverse)
+        else
+          self.sort_ops.clear
+        end
       end
       self
     end
@@ -155,7 +157,7 @@ module Queris
     end
     
     def sorting_by? index
-      if (index=@model.redis_index(*arg))
+      if (index=@model.redis_index(index))
         sort_ops.each do |op|
           op.operands.each { |o| return true if o.index == index }
         end
