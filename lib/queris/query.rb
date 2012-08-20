@@ -17,19 +17,18 @@ module Queris
       @ops = []
       @sort_ops = []
       @used_index = {}
-      @explanation = []
-      @redis_prefix = (arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":"
+      @redis_prefix = arg[:complete_prefix] || ((arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":")
       @redis=arg[:redis] || Queris.redis(:query, :slave, :master)
       @profile = model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
-      @ttl= arg[:ttl] || 600 #10 minutes default expire
+      @ttl= arg[:ttl] || 600 #10 minutes default time-to-live
       @created_at = Time.now.utc
-      if expire = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
+      if @expire_after = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
         raise "Can't create query with expire_at option and check_staleness options at once" if arg[:check_staleness]
         raise "Can't create query with expire_at option with track_stats disabled" if arg[:track_stats]==false
         arg[:track_stats]=true
         arg[:check_staleness] = Proc.new do |query|
-          query.time_cached < (expire || Time.at(0))
+          query.time_cached < (@expire_after || Time.at(0))
         end
       end
       @track_stats = arg[:track_stats]
@@ -84,18 +83,20 @@ module Queris
     def union(index, val=nil)
       prepare_op UnionOp, index, val
     end
+    alias :'∪' :union #UnionOp::SYMBOL
+
     def intersect(index, val=nil)
       prepare_op IntersectOp, index, val
     end
+    alias :'∩' :intersect #IntersectOp::SYMBOL
+
     def diff(index, val=nil)
       prepare_op DiffOp, index, val
     end
+    alias :'∖' :diff #DiffOp::SYMBOL
 
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
-      #if ForeignIndex === index
-      #  return prepare_op op_class, index.real_index, val
-      #end
       #set range and enumerable hack
       if op_class != UnionOp && ((Range === val && !index.handle_range?) || (Enumerable === val &&  !(Range === val)))
         #wrap those values in a union subquery
@@ -148,6 +149,9 @@ module Queris
         self.sort_ops.clear
       end
       self
+    end
+    def sortby(index, direction = 1) #SortOp::SYMBOL
+      sort index, direction == -1
     end
     
     def sorting_by? index
@@ -439,30 +443,83 @@ module Queris
     end
     
     def marshal_dump
-      instance_values.merge "redis" => false
+      subs = {}
+      @subqueries.each { |sub| subs[sub.id.to_sym]=sub.marshal_dump }
+      unique_params = params.dup
+      each_operand do |op|
+        unless Query === op.index
+          #binding.pry
+          param_name = op.index.name
+          unique_params.delete param_name if params[param_name] == op.value
+        end
+      end
+      {
+        model: model.name.to_sym,
+        ops: ops.map{|op| op.marshal_dump},
+        sort_ops: sort_ops.map{|op| op.marshal_dump},
+        subqueries: subs,
+        params: unique_params,
+        
+        args: {
+          complete_prefix: redis_prefix,
+          ttl: ttl,
+          expire_after: @expire_after,
+          track_stats: @track_stats
+        }
+      }
     end
     
     def marshal_load(data)
-      if data.kind_of? String
-        arg = JSON.load(data)
-      elsif data.kind_of? Enumerable
-        arg = data
-      else
-        arg = [] #SILENTLY FAIL RELOADING QUERY. THIS IS A *DANGER*OUS DESIGN DECISION MADE FOR THE SAKE OF CONVENIENCE.
-      end
-      arg.each do |n,v|
-        instance_variable_set "@#{n}", v
+      if Hash === data
+        initialize Queris.model(data[:model]), data[:args]
+        subqueries = {}
+        data[:subqueries].map do |id, sub|
+          q = Query.allocate
+          q.marshal_load sub
+          subqueries[id]=q
+        end
+        [ data[:ops], data[:sort_ops] ].each do |operations| #replay all query operations
+          operations.each do |operation|
+            operation.last.each do |op|
+              index = subqueries[op[0]] || @model.redis_index(op[0])
+              self.send operation.first, index, op.last
+            end
+          end
+        end
+        data[:params].each do |name, val|
+          params[name]=val
+        end
+      else #legacy
+        if data.kind_of? String
+          arg = JSON.load(data)
+        elsif data.kind_of? Enumerable
+          arg = data
+        else
+          arg = [] #SILENTLY FAIL RELOADING QUERY. THIS IS A *DANGER*OUS DESIGN DECISION MADE FOR THE SAKE OF CONVENIENCE.
+        end
+        arg.each { |n,v| instance_variable_set "@#{n}", v }
       end
       @redis ||= Queris.redis :query, :slave, :master
     end
 
     private
+    def each_operand #walk though all query operands
+      ops.each do |op|
+        op.operands.each do |operand|
+          yield operand
+        end
+      end
+    end
+    
     class Op #query operation
       class Operand #boilerplate
         attr_accessor :index, :value
         def initialize(op_index, val)
           @index = op_index
           @value = val
+        end
+        def marshal_dump
+          [(Query === index ? index.id : index.name).to_sym, value]
         end
       end
 
@@ -522,6 +579,10 @@ module Queris
         puts "after send #{self.class.name}"
         operands.each { |op| op.index.after_query_op(redis, target, op.value, op) if op.index.respond_to? :after_query_op }
       end
+
+      def marshal_dump
+        [self.class::SYMBOL, operands.map {|op| op.marshal_dump}]
+      end
     end
     
       
@@ -559,7 +620,10 @@ module Queris
         raise ArgumentError, "Invalid Queris index (#{arg.inspect}) passed to query. May be a string (index name), an index, or a query."
       else
         @used_index[res.name.to_sym]=true if res.respond_to? :name
-        subquery res if Query === res
+        if Query === res
+          subquery res
+          @used_index[res.id.to_sym]=:subquery
+        end
         res
       end
     end
