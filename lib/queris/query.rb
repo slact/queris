@@ -517,7 +517,17 @@ module Queris
       @redis ||= Queris.redis :query, :slave, :master
     end
 
+    def member? (obj)
+      binding.pry
+      ops.reverse_each do |op|
+        unless (member = op.member?(obj)).nil?
+          return member
+        end
+      end
+      false
+    end
     private
+
     def each_operand #walk though all query operands
       ops.each do |operation|
         operation.operands.each do |operand|
@@ -595,16 +605,36 @@ module Queris
       def marshal_dump
         [self.class::SYMBOL, operands.map {|op| op.marshal_dump}]
       end
-    end
-    
       
+      private
+      def member?(obj)
+        operands.reverse_each do |op|
+          index, val = op.index, op.value
+          if Query === index 
+            member = index.member? obj
+          else
+            obj_val = obj.send index.attribute
+            member = Enumerable === val ? val.member?(obj_val) : val == obj_val
+          end
+          member = yield member if block_given?
+          return member unless member.nil?
+        end
+        nil
+      end
+    end
     class UnionOp < Op
       COMMAND = :zunionstore
       SYMBOL = :'∪'
+      def member? obj
+        super(obj) { |m| m ? m : nil }
+      end
     end
     class IntersectOp < Op
       COMMAND = :zinterstore
       SYMBOL = :'∩'
+      def member? obj
+        super(obj) { |m| m ? nil : m }
+      end
     end
     class DiffOp < Op
       COMMAND = :zunionstore
@@ -615,6 +645,9 @@ module Queris
         super redis, result_key, first
         redis.zremrangebyscore result_key, :'-inf', :'-inf'
         # BUG: sorted sets with -inf scores will be treated incorrectly when diffing
+      end
+      def member? obj
+        super(obj) { |m| m ? !m : nil }
       end
     end
     class SortOp < Op
