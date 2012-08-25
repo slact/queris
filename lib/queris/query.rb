@@ -251,7 +251,26 @@ module Queris
       end
       false
     end
-    
+
+    #list all indices used by a query (no subqueries, unlessed asked for)
+    def indices(opt={})
+      ret = @used_index.dup
+      if opt[:subqueries]
+        subqueries.each do |sub|
+          ret.merge! sub.indices(subqueries: true, hash: true)
+        end
+      end
+      if opt[:hash]
+        ret
+      else
+        ret.values
+      end
+    end
+    #list all indices (including subqueries)
+    def all_indices
+      indices :subqueries => true
+    end
+
     # recursively and conditionally flush query and subqueries
     # arg parameters: flush query if:
     #  :ttl - query.ttl <= ttl
