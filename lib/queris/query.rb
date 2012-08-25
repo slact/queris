@@ -5,6 +5,7 @@ module Queris
   class Query
     
     attr_accessor :redis_prefix, :ttl, :created_at, :ops, :sort_ops, :model, :params, :used_index
+    attr_reader :subqueries
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
         arg, model = model, model[:model]
@@ -181,7 +182,7 @@ module Queris
       @profile
     end
 
-    def using_index_as_results_key?
+    def uses_index_as_results_key?
       if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
         first_op = ops.first.operands.first
         first_index = first_op.index
@@ -195,7 +196,7 @@ module Queris
     def query(force=nil, opt={})
       @profile.id=self
       force||=is_stale?
-      if using_index_as_results_key?
+      if uses_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
@@ -242,8 +243,9 @@ module Queris
     end
     alias :run :query
 
-    def uses_index?(*index)
-      index.each do |ind|
+    def uses_index?(*arg)
+      opt = arg.pop if Hash === arg.last
+      arg.each do |ind|
         index_name = Queris::Index === ind ? ind.name : ind.to_sym
         return true if @used_index[index_name]
       end
@@ -257,7 +259,7 @@ module Queris
     # or flush conditionally according to passed block: flush {|query| true }
     # when no parameters or block present, flush only this query and no subqueries
     def flush(arg={})
-      return if using_index_as_results_key?
+      return if uses_index_as_results_key?
       flushed = 0
       if block_given? #efficiency hackety hack - anonymous blocs are heaps faster than bound ones
         subqueries.each { |sub| flushed += sub.flush arg, &Proc.new }
@@ -334,7 +336,7 @@ module Queris
     
     def results_key
       if @results_key.nil?
-        if (reused_set_key = using_index_as_results_key?)
+        if (reused_set_key = uses_index_as_results_key?)
           @results_key = reused_set_key
         else
           @results_key ||= "#{@redis_prefix}results:" << digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}"
@@ -383,10 +385,6 @@ module Queris
     end
     def subquery_id(subquery)
       @subqueries.index subquery
-    end
-    
-    def subqueries
-      @subqueries
     end
     
     def explain(opt={})
@@ -444,11 +442,11 @@ module Queris
       subs = {}
       @subqueries.each { |sub| subs[sub.id.to_sym]=sub.marshal_dump }
       unique_params = params.dup
-      each_operand do |op|
-        unless Query === op.index
+      each_operand do |index, val|
+        unless Query === index
           #binding.pry
-          param_name = op.index.name
-          unique_params.delete param_name if params[param_name] == op.value
+          param_name = index.name
+          unique_params.delete param_name if params[param_name] == val
         end
       end
       {
@@ -502,13 +500,13 @@ module Queris
 
     private
     def each_operand #walk though all query operands
-      ops.each do |op|
-        op.operands.each do |operand|
-          yield operand
+      ops.each do |operation|
+        operation.operands.each do |operand|
+          yield operand.index, operand.value, operation
         end
       end
     end
-    
+
     class Op #query operation
       class Operand #boilerplate
         attr_accessor :index, :value
@@ -595,7 +593,7 @@ module Queris
       def target_key_weight; 0; end
       def operand_key_weight(op=nil); :'-inf'; end
       def run(redis, result_key, first=nil)
-        super redis, result_key, first=nil
+        super redis, result_key, first
         redis.zremrangebyscore result_key, :'-inf', :'-inf'
         # BUG: sorted sets with -inf scores will be treated incorrectly when diffing
       end
@@ -614,10 +612,10 @@ module Queris
       if (res=@model.redis_index(*arg)).nil?
         raise ArgumentError, "Invalid Queris index (#{arg.inspect}) passed to query. May be a string (index name), an index, or a query."
       else
-        @used_index[res.name.to_sym]=true if res.respond_to? :name
         if Query === res
           subquery res
-          @used_index[res.id.to_sym]=:subquery
+        else
+          @used_index[res.name.to_sym]=res if res.respond_to? :name
         end
         res
       end
