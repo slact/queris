@@ -530,7 +530,6 @@ module Queris
     end
 
     def member? (obj)
-      binding.pry
       ops.reverse_each do |op|
         unless (member = op.member?(obj)).nil?
           return member
