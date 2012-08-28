@@ -47,7 +47,7 @@ module Queris
   def self.redises(*redis_roles)
     redis_roles << :master if redis_roles.empty? #default
     redis_roles.each do |role|
-      unless (redises=@redis_by_role[role]).nil? || redises.empty?
+      unless (redises=@redis_by_role[role.to_sym]).nil? || redises.empty?
         return redises
       end
     end
@@ -77,8 +77,8 @@ module Queris
         end
       end
     end
+    redis
   end
-  
   
   def self.redis_master
     redis :master
