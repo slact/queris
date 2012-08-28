@@ -19,8 +19,8 @@ module Queris
       @sort_ops = []
       @used_index = {}
       @redis_prefix = arg[:complete_prefix] || ((arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name + ":")
-      @redis=arg[:redis] || Queris.redis(:query, :slave, :master)
-      @profile = model.query_profiler.new(nil, :redis => @redis || model.redis)
+      @redis=arg[:redis]
+      @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
       @ttl= arg[:ttl] || 600 #10 minutes default time-to-live
       @created_at = Time.now.utc
@@ -40,6 +40,14 @@ module Queris
       self
     end
 
+    def redis
+      if live?
+        @redis || Queris.redis(:master) || model.redis
+      else
+        @redis || model.redis || Queris.redis(:query, :slave, :master)
+      end
+    end
+    
     def use_redis(redis_instance)
       @redis = redis_instance
       subqueries.each {|sub| sub.use_redis redis_instance}
@@ -49,6 +57,10 @@ module Queris
     def stats
       raise "Query isn't profiled, no stats available" if @profile.nil?
       @profile.load
+    end
+    
+    def live?
+      @live
     end
     
     #TODO: obsolete this
@@ -62,11 +74,11 @@ module Queris
     end
     
     def time_cached
-      Time.at (@redis.hget(stats_key, 'time_cached').to_f || 0)
+      Time.at (redis.hget(stats_key, 'time_cached').to_f || 0)
     end
     
     def set_time_cached(val)
-      @redis.hset stats_key, 'time_cached', val.to_f
+      redis.hset stats_key, 'time_cached', val.to_f
     end
     
     def is_stale?
@@ -201,13 +213,13 @@ module Queris
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
         set_time_cached Time.now if track_stats?
-      elsif force || (results_key_type = @redis.type(results_key))[-3..-1] != 'set'
+      elsif force || (results_key_type = redis.type(results_key))[-3..-1] != 'set'
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
         #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
         @profile.start :time
         if results_key_type == 'string'
           #clear dummy key
-          @redis.del results_key
+          redis.del results_key
         end
         
         @subqueries.each do |q|
@@ -215,7 +227,7 @@ module Queris
         end
         #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
         @profile.start :own_time
-        @redis.multi do |pipelined_redis|
+        redis.multi do |pipelined_redis|
           first_op = ops.first
           ops.each { |op| op.run pipelined_redis, results_key, first_op == op }
           sort_ops.each { |op| op.run pipelined_redis, results_key }
@@ -223,7 +235,7 @@ module Queris
           pipelined_redis.expire results_key, @ttl
         end
         @profile.finish :own_time
-        if (master = Queris.redis :master) != @redis && !master.nil?  #we're on a slave
+        if (master = Queris.redis :master) != redis && !master.nil?  #we're on a slave
           if results_key_type == 'none'
             master.setnx results_key, '' #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
             master.expire results_key, @ttl
@@ -235,7 +247,7 @@ module Queris
       end
       if @resort #just sort
         #TODO: profile resorts
-        @redis.multi do |predis|
+        redis.multi do |predis|
            sort_ops.each { |op| op.run predis, results_key }
         end
       end
@@ -288,7 +300,7 @@ module Queris
       if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index? *arg[:index]) || block_given? && (yield sub)
         #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
         #otherwise, we'd have to create the key first (in a MULTI, of course)
-        flushed += (Queris.redis(:master) || @redis).del results_key
+        flushed += (Queris.redis(:master) || redis).del results_key
       end
       flushed
     end
@@ -302,9 +314,9 @@ module Queris
         arg.shift
       end
       key = results_key
-      case @redis.type(key)
+      case redis.type(key)
       when 'set'
-        res = @redis.smembers key
+        res = redis.smembers key
         raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." unless arg.empty?
       when 'zset'
         if arg.first && arg.first.kind_of?(Range)
@@ -312,7 +324,7 @@ module Queris
         else
           first, last = arg.first.to_i, (arg[1] || -1).to_i
         end
-        res = reverse ? @redis.zrange(key, first, last) : @redis.zrevrange(key, first, last)
+        res = reverse ? redis.zrange(key, first, last) : redis.zrevrange(key, first, last)
       else
         res = []
       end
@@ -328,11 +340,11 @@ module Queris
     
     def contains?(id)
       query
-      case @redis.type(results_key)
+      case redis.type(results_key)
       when 'set'
-        @redis.sismember(results_key, id)
+        redis.sismember(results_key, id)
       when 'zset'
-        !@redis.zrank(results_key, id).nil?
+        !redis.zrank(results_key, id).nil?
       when 'none'
         false
       else
@@ -374,11 +386,11 @@ module Queris
     def length
       query
       key = results_key
-      case @redis.type(key)
+      case redis.type(key)
       when 'set'
-        @redis.scard key
+        redis.scard key
       when 'zset'
-        @redis.zcard key
+        redis.zcard key
       else #not a set. 
         0
       end
@@ -395,7 +407,7 @@ module Queris
       else
         subq = self.class.new((arg[:model] or model), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
       end
-      subq.use_redis @redis
+      subq.use_redis redis
       unless @used_subquery[subq]
         @used_subquery[subq]=true
         @subqueries << subq
