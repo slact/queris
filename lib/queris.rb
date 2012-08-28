@@ -19,8 +19,19 @@ module Queris
   def self.redis(*redis_roles)
     redises(*redis_roles).sample || ($redis.kind_of?(Redis) ? $redis : nil) #for backwards compatibility with crappy old globals-using code.
   end
-    
-
+   
+  #returns another connection to the same server
+  def self.duplicate_redis_client(redis, role=false)
+    cl = redis.client
+    r = Redis.new({scheme:    cl.scheme,
+                   port:      cl.port,
+                   host:      cl.host,
+                   path:      cl.path,
+                   timeout:   cl.timeout,
+                   password:  cl.password,
+                   db:        cl.db })
+    add_redis r, role
+  end
   # get all redis connections for given redis server role.
   # when more than one role is passed, treat them in order of decreasing preference
   # when no role is given, :master is assumed
