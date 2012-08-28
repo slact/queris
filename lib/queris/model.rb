@@ -145,7 +145,17 @@ module Queris
     def attribute_diff(attr)
       @attributes_to_incr[attr.to_sym]
     end
-    
+    #list of changed attributes
+    def changed
+      delta = (@attributes_to_save.keys + @attributes_to_incr.keys)
+      delta.uniq!
+      delta
+    end
+    #any unsaved changes?
+    def changed?
+      @attributes_to_save.empty? && @attributes_to_incr.empty?
+    end
+
     def delete
       key = hash_key
       redis.multi do
