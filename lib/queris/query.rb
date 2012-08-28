@@ -178,6 +178,17 @@ module Queris
       nil
     end
     
+    #get an object's sorting score
+    def sort_score(obj)
+      score = 0
+      sort_ops.each do |op|
+        op.operands.each do |o|
+          score += o.value * (obj.send(o.index.attribute) || 0).to_f
+        end
+      end
+      score
+    end
+    
     def sorting_by
       sorting = sort_ops.map do |op|
         op.operands.map{|o| "#{(o.value < 0) ? '-' : ''}#{o.index.name}" }.join('*')
