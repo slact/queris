@@ -56,8 +56,10 @@ module Queris
   
   def self.add_redis(redis, *roles)
     roles << :master if roles.empty?
+    roles = [] if roles.length == 1 && !roles.first
     @redis_connections << redis
     roles.each do |role|
+      role = role.to_sym
       @redis_by_role[role]||=[]
       @redis_by_role[role] << redis
     end
