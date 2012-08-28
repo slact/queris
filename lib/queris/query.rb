@@ -205,6 +205,19 @@ module Queris
       @profile
     end
 
+    #update query results with object(s)
+    def update(*obj)
+      return if uses_index_as_results_key?
+      obj.each do |o|
+        if member? o
+          score = sort_score o
+          redis.zadd results_key, score || 0, o.id #BUG: HARDCODED id attribute
+        else
+          redis.zrem results_key, o.id #BUG: HARDCODED id attribute
+        end
+      end
+    end
+    
     def uses_index_as_results_key?
       if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
         first_op = ops.first.operands.first
