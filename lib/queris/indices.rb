@@ -49,8 +49,7 @@ module Queris
       (@index_value || @value).nil? ? value : (@index_value || @value).call(value, obj)
     end
     def digest(value)
-      #value
-      Digest::SHA1.hexdigest value.to_s
+      Queris.debug? ? value : Digest::SHA1.hexdigest(value.to_s)
     end
     def value_is(obj)
       obj.send @attribute

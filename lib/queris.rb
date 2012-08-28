@@ -14,6 +14,14 @@ module Queris
   @model_lookup={}
   @redis_connections=[]
   @redis_by_role={}
+  @debug=false
+  
+  def self.debug?
+    @debug
+  end
+  def self.debug=(enabled)
+    @debug = enabled
+  end
   
   #retrieve redis connection matching given redis server role, in order or decreasing preference
   def self.redis(*redis_roles)

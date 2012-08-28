@@ -680,8 +680,7 @@ module Queris
     end
     
     def digest(value)
-      #value
-      Digest::SHA1.hexdigest value.to_s
+      Queris.debug? ? value : Digest::SHA1.hexdigest(value.to_s)
     end
   end
 end
