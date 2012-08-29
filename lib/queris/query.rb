@@ -197,8 +197,8 @@ module Queris
     
     def sorting_by
       sorting = sort_ops.map do |op|
-        op.operands.map{|o| "#{(o.value < 0) ? '-' : ''}#{o.index.name}" }.join('*')
-      end.join('*')
+        op.operands.map{|o| "#{(o.value < 0) ? '-' : ''}#{o.index.name}" }.join('+')
+      end.join('+')
       sorting.empty? ? nil : sorting
     end
 
