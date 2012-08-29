@@ -23,6 +23,12 @@ module Queris
       @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
       @ttl= arg[:ttl] || 600 #10 minutes default time-to-live
+      if arg[:live]==true
+        @live = true
+      elsif Enumerable === arg[:live]
+        @live = true
+        @live_indices = arg[:live_indices] || arg[:live].map { |iname| @model.redis_index iname }
+      end
       @created_at = Time.now.utc
       if @expire_after = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
         raise "Can't create query with expire_at option and check_staleness options at once" if arg[:check_staleness]
@@ -246,6 +252,10 @@ module Queris
           redis.del results_key
         end
         
+        #@profile.start :live_query_time
+        Queris::QueryStore.add(self) if live?
+        #@profile.finish :live_query_time
+        
         @subqueries.each do |q|
           q.query force unless opt[:use_cached_subqueries]
         end
@@ -305,6 +315,10 @@ module Queris
     #list all indices (including subqueries)
     def all_indices
       indices :subqueries => true
+    end
+    def all_live_indices
+      return [] if !@live
+      @live_indices || all_indices
     end
 
     # recursively and conditionally flush query and subqueries
@@ -515,7 +529,8 @@ module Queris
           complete_prefix: redis_prefix,
           ttl: ttl,
           expire_after: @expire_after,
-          track_stats: @track_stats
+          track_stats: @track_stats,
+          live: @live && !@live_indices.nil? ? @live_indices.map{|i| i.name} : @live
         }
       }
     end
@@ -560,6 +575,9 @@ module Queris
         end
       end
       false
+    end
+    def marshaled
+      Marshal.dump self
     end
     private
 

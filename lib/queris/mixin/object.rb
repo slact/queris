@@ -118,6 +118,14 @@ module Queris
           Queris::QueryProfiler
         end
       end
+      def live_queries
+        require "queris/query_store"
+        Queris::LiveQueryIndex.new :name => '_live_queries', :model => self
+        #metaquery needs a separate connection
+        if !Queris.redis(:metaquery)
+          Queris.duplicate_redis_client redis, "#{self.name}:metaquery"
+        end
+      end
       def index_attribute(arg={}, &block)
         if arg.kind_of? Symbol 
           arg = {:attribute => arg }

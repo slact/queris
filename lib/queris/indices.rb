@@ -156,6 +156,27 @@ module Queris
     
   end
   
+  class LiveQueryIndex < Index
+    def self.skip_create?; true; end
+    def initialize *arg
+      super *arg
+      raise Exception, "Model not passed to index." unless @model
+    end
+    def metaquery(*used_indices)
+      q = Queris::QueryStore.query(@model, :ttl => 86400)
+      used_indices.each { |i| q.union i }
+      q
+    end
+    def update(obj, value=nil)
+      q = metaquery *obj.changed
+      q.results.each do |query|
+        query.update obj
+      end
+    end
+    alias :add :update
+    alias :remove :update
+  end
+  
   class SearchIndex < Index
     def initialize(arg={})
       super arg
