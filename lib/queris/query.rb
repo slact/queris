@@ -199,7 +199,7 @@ module Queris
       sorting = sort_ops.map do |op|
         op.operands.map{|o| "#{(o.value < 0) ? '-' : ''}#{o.index.name}" }.join('+')
       end.join('+')
-      sorting.empty? ? nil : sorting
+      sorting.empty? ? nil : sorting.to_sym
     end
 
     def resort #apply a sort to set of existing results
@@ -223,7 +223,7 @@ module Queris
         redis.zrem results_key, obj.id #BUG: HARDCODED id attribute
       end
     end
-    
+
     def uses_index_as_results_key?
       if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
         first_op = ops.first.operands.first
