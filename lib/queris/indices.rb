@@ -170,11 +170,17 @@ module Queris
     def update(obj, value=nil)
       q = metaquery *obj.changed
       q.results.each do |query|
-        query.update obj
+        if block_given?
+          yield query
+        else
+          query.update obj
+        end
       end
     end
     alias :add :update
-    alias :remove :update
+    def delete(obj, value=nil)
+      update(obj, value) { |query| query.update obj, :delete => true }
+    end
   end
   
   class SearchIndex < Index

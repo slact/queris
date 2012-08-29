@@ -212,15 +212,15 @@ module Queris
     end
 
     #update query results with object(s)
-    def update(*obj)
+    def update(obj, arg={})
       return if uses_index_as_results_key?
-      obj.each do |o|
-        if member? o
-          score = sort_score o
-          redis.zadd results_key, score || 0, o.id #BUG: HARDCODED id attribute
-        else
-          redis.zrem results_key, o.id #BUG: HARDCODED id attribute
-        end
+      if arg[:delete] 
+        redis.zrem results_key, obj.id #BUG: HARDCODED id attribute
+      elsif member? obj
+        score = sort_score obj
+        redis.zadd results_key, score || 0, obj.id #BUG: HARDCODED id attribute
+      else
+        redis.zrem results_key, obj.id #BUG: HARDCODED id attribute
       end
     end
     
