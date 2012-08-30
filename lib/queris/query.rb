@@ -140,6 +140,20 @@ module Queris
     end
     private :prepare_op
 
+    #undo the last n operations
+    def undo (num_operations=1)
+      return self if num_operations == 0 || ops.empty?
+      @results_key = nil
+      op = ops.last
+      raise "Unexpected operand-less query operation" unless (last_operand = op.operands.last)
+      if Query === (sub = last_operand.index)
+        subqueries.delete sub
+      end
+      op.operands.pop
+      ops.pop if op.operands.empty?
+      undo(num_operations - 1)
+    end
+
     def sort(index, reverse = nil)
       # accept a minus sign in front of index name to mean reverse
       @results_key = nil
