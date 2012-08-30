@@ -272,14 +272,19 @@ module Queris
         #@profile.finish :live_query_time
         
         @subqueries.each do |q|
-          q.query force unless opt[:use_cached_subqueries]
+          q.query(force, :debug => opt[:debug]) unless opt[:use_cached_subqueries]
         end
         #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
         @profile.start :own_time
+        debug_info = []
         redis.multi do |pipelined_redis|
           first_op = ops.first
-          ops.each { |op| op.run pipelined_redis, results_key, first_op == op }
-          sort_ops.each { |op| op.run pipelined_redis, results_key }
+          [ops, sort_ops].each do |ops| 
+            ops.each do |op| 
+              op.run pipelined_redis, results_key, first_op == op
+              debug_info << [op.to_s, pipelined_redis.zcard(results_key)] if opt[:debug]
+            end
+          end
           #puts "QUERY TTL: @ttl"
           pipelined_redis.expire results_key, @ttl
         end
@@ -293,6 +298,12 @@ module Queris
         set_time_cached Time.now if track_stats?
         @profile.finish :time
         @profile.save
+
+        unless debug_info.empty?
+          #debug_info.map {|line| "#{line.first.symbol} #{line.first.attribute} .#{line[0].value}
+          puts "Debugging query #{self}"
+          debug_info.each { |l| puts " #{l.last.value}   #{l.first}"}
+        end
       end
       if @resort #just sort
         #TODO: profile resorts
@@ -675,6 +686,9 @@ module Queris
 
       def marshal_dump
         [self.class::SYMBOL, operands.map {|op| op.marshal_dump}]
+      end
+      def to_s
+        "#{symbol} #{operands.map{|o| Query === o.index ? o.index : "#{o.index.name}<#{o.value}>"}.join(" #{symbol} ")}"
       end
       
       private
