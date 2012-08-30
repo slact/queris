@@ -504,6 +504,9 @@ module Queris
       end
       "(#{r.join})"
     end
+    def to_s
+      explain
+    end
     
     def structure
       explain :structure => true
