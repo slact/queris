@@ -243,7 +243,7 @@ module Queris
       if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
         first_op = ops.first.operands.first
         first_index = first_op.index
-        unless first_index.respond_to?(:before_query_op) || first_index.respond_to?(:after_query_op)
+        unless Enumerable === first_op.value || first_index.respond_to?(:before_query_op) || first_index.respond_to?(:after_query_op)
           return first_index.key first_op.value
         end
       end
