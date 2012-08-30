@@ -313,7 +313,7 @@ module Queris
       false
     end
 
-    #list all indices used by a query (no subqueries, unlessed asked for)
+    #list all indices used by a query (no subqueries, unless asked for)
     def indices(opt={})
       ret = @used_index.dup
       if opt[:subqueries]
