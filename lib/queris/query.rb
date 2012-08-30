@@ -116,6 +116,8 @@ module Queris
 
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
+      set_param_from_index index, val
+
       #set range and enumerable hack
       if op_class != UnionOp && ((Range === val && !index.handle_range?) || (Enumerable === val &&  !(Range === val)))
         #wrap those values in a union subquery
@@ -123,9 +125,8 @@ module Queris
         val.each { |v| sub_union.union index, v }
         index, val = sub_union, nil
       end
-      
+
       use_index index  #accept string index names and indices and queries
-      set_param_from_index index, val
       @results_key = nil
       op = op_class.new
       last_op = ops.last
