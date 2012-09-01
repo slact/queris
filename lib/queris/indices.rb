@@ -313,7 +313,8 @@ module Queris
 
     def before_query_op(redis, results_key, val, op=nil)
       #copy to temp key
-      temp = "#{results_key}:temp:#{SecureRandom.hex}"
+      @random||=SecureRandom.hex
+      temp = "#{results_key}:temp:rangehack:#{@random}"
       redis.zunionstore temp, [ key ]
       val = (val..val) unless Enumerable === val
       remove_inverse_range redis, temp, val
