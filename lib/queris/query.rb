@@ -257,9 +257,9 @@ module Queris
       nil
     end
 
-    def query(force=nil, opt={})
+    def run(opt={})
       @profile.id=self
-      force||=is_stale?
+      force=opt[:force] || is_stale?
       if uses_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
@@ -320,7 +320,7 @@ module Queris
       end
       self
     end
-    alias :run :query
+    alias :query :run
 
     def uses_index?(*arg)
       opt = arg.pop if Hash === arg.last
