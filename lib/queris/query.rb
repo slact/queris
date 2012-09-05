@@ -1,7 +1,6 @@
 # encoding: utf-8
 require 'json'
 require 'securerandom'
-
 module Queris
   class Query
     
@@ -231,8 +230,18 @@ module Queris
     
     def live?; @live; end
     def live=(val);  @live= val; end
-    def live!; live=true; self; end
-    def static!; live=false; self; end
+    #static queries are updated only after they expire
+    def static!; @live=false; self; end
+    #live queries have pending updates stored nearby
+    def live!; @live=true; self; end
+    #realtime queries are updated automatically, on the spot
+    def realtime!
+      Queris::QueryStore.set_flag(self, 'realtime')
+      live!
+    end
+    def realtime?
+      live? && Queris::QueryStore.get_flag(self, 'realtime')
+    end
 
     #update query results with object(s)
     def update(obj, arg={})
@@ -587,11 +596,6 @@ module Queris
     
     def id
       digest results_key
-    end
-    
-    #realtime queries get auto-updated
-    def realtime?
-      live? && Queris::QueryStore.get_flag(self, 'realtime')
     end
     
     def length
