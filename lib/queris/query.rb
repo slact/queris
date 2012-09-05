@@ -65,10 +65,6 @@ module Queris
       @profile.load
     end
     
-    def live?
-      @live
-    end
-    
     #TODO: obsolete this
     def track_stats?
       @track_stats
@@ -232,9 +228,8 @@ module Queris
       @profile
     end
     
-    def live=(val)
-      @live = val
-    end
+    def live?; @live; end
+    def live=(val);  @live= val; end
     def live!; live=true; self; end
     def static!; live=false; self; end
 
