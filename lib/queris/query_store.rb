@@ -31,22 +31,14 @@ module Queris
       def index_to_val(index)
         Index === index ? "#{index.model.name}:#{index.class.name.split('::').last}:#{index.name}" : index
       end
-      
+
       def add(query)
-        pipelined_each_index(query) {|i| i.add query}
+        redis_indices(:class => Queris::SearchIndex).each {|i| i.add query}
       end
       def remove(query)
-        pipelined_each_index(query) {|i| i.remove query}
+        redis_indices(:class => Queris::SearchIndex).each {|i| i.remove query}
       end
-      def pipelined_each_index(q)
-        redis(q).multi do
-          redis_indices(:class => Queris::SearchIndex).each do |index|
-            yield index unless Query === index
-          end
-        end
-      end
-      private :pipelined_each_index
-      
+
       def set_flag(query, *flags)
         if flags.count = 1
           redis(query).setex query.results_key(flags.first), 1, query.ttl
