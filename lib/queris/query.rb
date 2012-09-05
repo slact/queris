@@ -454,6 +454,11 @@ module Queris
       digest results_key
     end
     
+    #realtime queries get auto-updated
+    def realtime?
+      live? && Queris::QueryStore.get_flag(self, 'realtime')
+    end
+    
     def length
       query
       key = results_key
