@@ -38,6 +38,9 @@ module Queris
         end
         #BUG: redis_indices is very static. superclass modifications after class declaration will not count.
       end
+      def foreign_redis_indices
+        @foreign_redis_indices ||= []
+      end
       def query_profiler; @profiler || DummyProfiler; end
       def profile_queries?; query_profiler.nil?; end
 
@@ -146,7 +149,11 @@ module Queris
         index = index_attribute(arg) do |index|
           index.name = "foreign_index_#{index.name}".to_sym
         end
-        arg[:model].send :index_attribute, arg.merge(:index=> Queris::ForeignIndex, :real_index => index)
+
+        foreigner = arg[:model].send :index_attribute, arg.merge(:index=> Queris::ForeignIndex, :real_index => index)
+        @foreign_redis_indices ||= []
+        @foreign_redis_indices.push foreigner
+        foreigner
       end
       def index_attribute_from(arg) 
         model = arg[:model]
