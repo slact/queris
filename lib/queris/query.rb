@@ -42,7 +42,7 @@ module Queris
       @track_stats = arg[:track_stats]
       @check_staleness = arg[:check_staleness]
       if block_given?
-        instance_eval &block
+        instance_eval(&block)
       end
       self
     end
@@ -77,7 +77,7 @@ module Queris
     end
     
     def time_cached
-      Time.at (redis.hget(stats_key, 'time_cached').to_f || 0)
+      Time.at(redis.hget(stats_key, 'time_cached').to_f || 0)
     end
     
     def set_time_cached(val)
@@ -86,7 +86,7 @@ module Queris
     
     def is_stale?
       if @check_staleness.kind_of? Proc
-        stale = @check_staleness.call self
+        @check_staleness.call self
       end
     end
     
@@ -644,7 +644,7 @@ module Queris
     
     def info(indent="", output = true)
       info =  "#{indent}key: #{results_key}\r\n"
-      info << "#{indent}id: #{id}, ttl: #{@ttl}, sort: #{sorting_by || "none"}\r\n"
+      info << "#{indent}id: #{id}, ttl: #{ttl}, sort: #{sorting_by || "none"}\r\n"
       info << "#{indent}#{explain}\r\n"
       if !@subqueries.empty?
         info << "#{indent}subqueries:\r\n"
