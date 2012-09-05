@@ -235,15 +235,32 @@ module Queris
 
     #update query results with object(s)
     def update(obj, arg={})
-      return if uses_index_as_results_key?
-      if arg[:delete] 
-        redis.zrem results_key, obj.id #BUG: HARDCODED id attribute
-      elsif member? obj
-        score = sort_score obj
-        redis.zadd results_key, score || 0, obj.id #BUG: HARDCODED id attribute
+      return self if uses_index_as_results_key?
+      master = Queris.redis(:master) || redis
+      if realtime? #update query in-place
+        if arg[:delete] || !member?(obj)
+          redis.zrem results_key, obj.id #BUG-IN-WAITING: HARDCODED id attribute
+        else
+          score = sort_score obj
+          redis.zadd results_key, score || 0, obj.id #BUG-IN-WAITING: HARDCODED id attribute
+        end
+        Queris::QueryStore.refresh_flag(self, 'realtime')
+        master.expire results_key, ttl #query is fresh, so its ttl gets reset
       else
-        redis.zrem results_key, obj.id #BUG: HARDCODED id attribute
+        master.multi do |r|
+          if arg[:delete] || !member?(obj)
+            delta_key = results_key('delta:diff')
+            r.zadd delta_key, '-inf', obj.id #BUG-IN-WAITING: HARDCODED id attribute
+          else
+            #differential score because Z*STORE commands can aggregate scores only with addition (also MIN & MAX, but we don't care about those. If only there were a LAST or OVERRIDE aggregate function)
+            score = sort_score(obj) - sort_score(obj, previous: true)
+            r.zincrby results_key('delta:union'), score || 0, obj.id #BUG-IN-WAITING: HARDCODED id attribute
+          end
+          r.expire delta_key, ttl
+          master.expire results_key, ttl
+        end
       end
+      self
     end
 
     def uses_index_as_results_key?
