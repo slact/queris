@@ -33,6 +33,8 @@ module Queris
         if !opt[:attributes].nil?
           attrs = opt[:attributes].map{|v| v.to_sym}.to_set
           @redis_indices.select { |index| attrs.member? index.attribute }
+        elsif !opt[:class].nil?
+          @redis_indices.select { |index| opt[:class] === index }
         else
           @redis_indices
         end
