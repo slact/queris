@@ -158,8 +158,8 @@ module Queris
   
   class LiveQueryIndex < Index
     def self.skip_create?; true; end
-    def initialize *arg
-      super *arg
+    def initialize(*arg)
+      super(*arg)
       raise Exception, "Model not passed to index." unless @model
     end
     def metaquery(*obj_attrs)
@@ -170,7 +170,7 @@ module Queris
       q
     end
     def update(obj, value=nil)
-      q = metaquery *obj.changed
+      q = metaquery(*obj.changed)
       q.results.each do |query|
         if block_given?
           yield query
