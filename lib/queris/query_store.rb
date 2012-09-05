@@ -40,8 +40,8 @@ module Queris
       end
       def pipelined_each_index(q)
         redis(q).multi do
-          redis_indices.each do |index|
-            yield index
+          redis_indices(:class => Queris::SearchIndex).each do |index|
+            yield index unless Query === index
           end
         end
       end
