@@ -28,8 +28,14 @@ module Queris
         raise "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
         index
       end
-      def redis_indices
+      def redis_indices(opt={})
         @redis_indices ||= superclass.respond_to?(:redis_indices) ? self.superclass.redis_indices.clone : []
+        if !opt[:attributes].nil?
+          attrs = opt[:attributes].map{|v| v.to_sym}.to_set
+          @redis_indices.select { |index| attrs.member? index.attribute }
+        else
+          @redis_indices
+        end
         #BUG: redis_indices is very static. superclass modifications after class declaration will not count.
       end
       def query_profiler; @profiler || DummyProfiler; end
