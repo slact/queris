@@ -257,6 +257,21 @@ module Queris
       nil
     end
 
+    
+    #Level Cleared. Time extended!
+    def extend_ttl(r=nil)
+      return (Queris.redis(:master) || redis).multi{ |multir| extend_ttl multir } if r.nil?
+      r.expire results_key, ttl
+      r.setex results_key(:exists), ttl, ""
+      self
+    end
+    
+    #check for the existence of a result set. We need to do this in case the result set is empty
+    def results_exist?(r=nil)
+      return(Queris.redis(:master) || redis).multi{ |multir| results_exist? multir }.first if r.nil?
+      r.exists results_key(:exists)
+    end
+    
     def run(opt={})
       @profile.id=self
       force=opt[:force] || is_stale?
