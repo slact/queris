@@ -225,6 +225,12 @@ module Queris
     def profiler
       @profile
     end
+    
+    def live=(val)
+      @live = val
+    end
+    def live!; live=true; self; end
+    def static!; live=false; self; end
 
     #update query results with object(s)
     def update(obj, arg={})
