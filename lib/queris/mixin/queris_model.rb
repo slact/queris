@@ -57,15 +57,9 @@ module Queris
     end
 
     def results(*arg)
-      #TODO
-      res_ids = super(*arg)
-      res = []
-      res_ids.each_with_index do |id, i|
-        unless (cached = @model.find id).nil?
-          res << cached
-        end
+      res_ids = super(*arg) do |id|
+        @model.find id
       end
-      res
     end
 
     def subquery(arg={})

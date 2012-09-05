@@ -480,32 +480,60 @@ module Queris
     end
     alias :clear :flush
     
-    def results(*arg, &block)
+    #flexible query results retriever
+    #results(x..y) from x to y
+    #results(x, y) same
+    #results(x) first x results
+    #results(x..y, :reverse) range in reverse
+    #results(x..y, :with_scores) return scores with results as [ [score1, res1], [score2, res2] ... ]
+    def results(*arg)
       query
+      opt= Hash === arg.last ? arg.pop : {}
+      binding.pry
+      opt[:reverse]= true if arg.member?(:reverse)
+      opt[:with_scores]=true if arg.member?(:with_scores)
+      opt[:range]=arg.shift if Range === arg.first
+      opt[:range]=(arg.shift..arg.shift) if Numeric === arg[0] && arg[0].class == arg[1].class
+      opt[:range]=(0..arg.shift) if Numeric === arg[0]
+      
       @profile.start :results_time
-      if arg.last == :reverse
-        reverse = true
-        arg.shift
-      end
       key = results_key
       case redis.type(key)
       when 'set'
         res = redis.smembers key
         raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." unless arg.empty?
       when 'zset'
-        if arg.first && arg.first.kind_of?(Range)
-          first, last = arg.first.begin, arg.first.end - (arg.first.exclude_end? ? 1 : 0)
+        rangeopt = {}
+        rangeopt[:with_scores] = true if opt[:with_scores]
+        if (scrange = opt[:score])
+          raise "query.results :score parameter must be a Range" unless Range === scrange
+          raise "Can't select result range numerically and by score (pick one, not both)" if opt[:range]
+          first, last = scrange.begin, (scrange.exclude_end?  ? "(#{scrange.end}" : scrange.end)
+          cmd = opt[:reverse] ? :zrevrangebyscore : :zrangebyscore
         else
-          first, last = arg.first.to_i, (arg[1] || -1).to_i
+          if (range = opt[:range])
+            first, last = range.begin, range.end - (range.exclude_end? ? 1 : 0)
+          else
+            first, last = 0, -1
+          end
+          cmd = opt[:reverse] ? :zrevrange : :zrange
         end
-        res = reverse ? redis.zrange(key, first, last) : redis.zrevrange(key, first, last)
+        res = redis.send(cmd, key, first, last, rangeopt)
       else
         res = []
       end
       if block_given?
-        res.map!(&block)
+        if opt[:with_scores]
+          ret = []
+          res.each do |r|
+            obj = yield r.first
+            ret << [obj, r.last] unless obj.nil?
+          end
+          res = ret
+        else
+          res.map!(&Proc.new).compact!
+        end
       end
-      
       @profile.finish :results_time
       @profile.save
       res
