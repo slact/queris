@@ -15,39 +15,67 @@ module Queris
     end)
     index_only
     
-    def self.redis(another_model = nil)
-      roles = [ :metaquery ]
-      roles.unshift ("#{another_model.name}:metaquery").to_sym if another_model
-      Queris.redis *roles
-    end
-    
-    def self.index_to_val(index)
-      Index === index ? "#{index.model.name}:#{index.class.name.split('::').last}:#{index.name}" : index
-    end
-    
-    def self.add(query)
-      raise "Not a Queris query, can't add it as a Live query" unless Query === query
-      (redis || query.model.redis).multi do
-        redis_indices.each do |index|
-          index.add query
+    class << self
+      def redis(another_model = nil)
+        another_model = another_model.model if Query === another_model
+        roles = [ :metaquery ]
+        roles.unshift("#{another_model.name}:metaquery".to_sym) if another_model
+        r = Queris.redis(*roles)
+        #raise "No appropriate redis connection found for QueryStore. Add a queris connection with the metaquery role (Queris.add_redis(r, :metaquery), or add live_queries to desired models." unless r
+        r
+      end
+      
+      def index_to_val(index)
+        Index === index ? "#{index.model.name}:#{index.class.name.split('::').last}:#{index.name}" : index
+      end
+      
+      def add(query)
+        pipelined_each_index(query) {|i| i.add query}
+      end
+      def remove(query)
+        pipelined_each_index(query) {|i| i.remove query}
+      end
+      def pipelined_each_index(q)
+        redis(q).multi do
+          redis_indices.each do |index|
+            yield index
+          end
         end
       end
-    end
-    def self.remove(query)
-      (redis || query.model.redis).multi do
-        redis_indices.each do |index|
-          index.remove query
+      private :pipelined_each_index
+      
+      def set_flag(query, *flags)
+        if flags.count = 1
+          redis(query).setex query.results_key(flags.first), 1, query.ttl
+        else
+          redis(query).multi do |r|
+            flags.each {|flag| redis(query).setex query.results_key(flag), 1, query.ttl }
+          end
         end
       end
-    end
-    def self.query(model, arg={})
-      Metaquery.new(self, arg.merge(:target_model => model))
-    end
+      alias :set_flags :set_flag
+      def refresh_flag(query, flag)
+        redis(query).expire query.results_key(flag), query.ttl
+      end
+      def clear_flag(query, *flags)
+        redis(query).multi do |r|
+          flags.each {|flag| redis(query).del(query.results_key flag)}
+        end
+      end
+      alias :clear_flags :clear_flag
+      def get_flag(query, flag)
+        redis(query).exists query.results_key(flag)
+      end
 
-    def self.find(marshaled)
-      Marshal.load(marshaled)
-    end
+      def query(model, arg={})
+        Metaquery.new(self, arg.merge(:target_model => model))
+      end
 
+      def find(marshaled)
+        Marshal.load(marshaled)
+      end
+
+    end
     class Metaquery < QuerisModelQuery
       def initialize(model, arg={})
         raise "Metaqueries can't be live" if arg[:live]
