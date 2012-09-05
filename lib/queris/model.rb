@@ -140,6 +140,7 @@ module Queris
       end while bulk_response.nil?
       @attributes_to_save.clear
       @attributes_to_incr.clear
+      self
     end
 
     def attribute_diff(attr)
