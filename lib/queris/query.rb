@@ -708,7 +708,14 @@ module Queris
             next
           else
             obj_val = obj.send index.attribute
-            member = Enumerable === val ? val.member?(obj_val) : val == obj_val
+            member = case val
+            when Range
+              val.cover? member unless member.nil?
+            when Enumerable
+              val.member? member unless member.nil?
+            else
+              val == obj_val
+            end
           end
           member = yield member if block_given?
           return member unless member.nil?
