@@ -199,12 +199,18 @@ module Queris
       nil
     end
     
-    #get an object's sorting score
-    def sort_score(obj)
+    #get an object's sorting score, or its previous sorting score if asked for
+    def sort_score(obj, arg={})
       score = 0
       sort_ops.each do |op|
         op.operands.each do |o|
-          score += o.value * (obj.send(o.index.attribute) || 0).to_f
+          if arg[:previous]
+            val = obj.send "#{o.index.attribute}_was"
+          else
+            val = obj.send o.index.attribute
+          end
+          
+          score += o.value * (val || 0).to_f
         end
       end
       score
