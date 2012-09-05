@@ -704,6 +704,8 @@ module Queris
           index, val = op.index, op.value
           if Query === index 
             member = index.member? obj
+          elsif ForeignIndex === index
+            next
           else
             obj_val = obj.send index.attribute
             member = Enumerable === val ? val.member?(obj_val) : val == obj_val
