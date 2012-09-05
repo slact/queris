@@ -400,10 +400,10 @@ module Queris
       elsif arg.count>0
         subqueries.each { |sub| flushed += sub.flush arg }
       end
-      if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index? *arg[:index]) || block_given? && (yield sub)
+      if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index?(*arg[:index])) || block_given? && (yield sub)
         #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
         #otherwise, we'd have to create the key first (in a MULTI, of course)
-        flushed += (Queris.redis(:master) || redis).del results_key
+        flushed += (Queris.redis(:master) || redis).del results_key, results_key(:exists)
       end
       flushed
     end
