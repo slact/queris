@@ -1,5 +1,6 @@
 # encoding: utf-8
 require 'json'
+require 'securerandom'
 
 module Queris
   class Query
@@ -297,53 +298,17 @@ module Queris
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
         set_time_cached Time.now if track_stats?
-      elsif force || (results_key_type = redis.type(results_key))[-3..-1] != 'set'
-        #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
-        #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
-        @profile.start :time
-        if results_key_type == 'string'
-          #clear dummy key
-          redis.del results_key
-        end
-        
-        #@profile.start :live_query_time
+      elsif force || !results_exist?
+        #puts "#{self} does not exist or is being forced"
+        @profile.record :cache_miss, 1
+        run_static_query force, opt[:debug], opt[:use_cached_queries]
         Queris::QueryStore.add(self) if live?
-        #@profile.finish :live_query_time
-        
-        @subqueries.each do |q|
-          q.query(force, :debug => opt[:debug]) unless opt[:use_cached_subqueries]
-        end
-        #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
-        @profile.start :own_time
-        debug_info = []
-        redis.multi do |pipelined_redis|
-          first_op = ops.first
-          [ops, sort_ops].each do |ops| 
-            ops.each do |op| 
-              op.run pipelined_redis, results_key, first_op == op
-              debug_info << [op.to_s, pipelined_redis.zcard(results_key)] if opt[:debug]
-            end
-          end
-          #puts "QUERY TTL: @ttl"
-          pipelined_redis.expire results_key, @ttl
-        end
-        @profile.finish :own_time
-        if (master = Queris.redis :master) != redis && !master.nil?  #we're on a slave
-          if results_key_type == 'none'
-            master.setnx results_key, '' #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
-            master.expire results_key, @ttl
-          end
-        end
-        set_time_cached Time.now if track_stats?
-        @profile.finish :time
-        @profile.save
-
-        unless debug_info.empty?
-          #debug_info.map {|line| "#{line.first.symbol} #{line.first.attribute} .#{line[0].value}
-          puts "Debugging query #{self}"
-          debug_info.each { |l| puts " #{l.last.value}   #{l.first}"}
-        end
+      elsif live?
+        run_live_query opt[:debug]
+      else
+        extend_ttl
       end
+
       if @resort #just sort
         #TODO: profile resorts
         redis.multi do |predis|
@@ -354,8 +319,114 @@ module Queris
     end
     alias :query :run
 
+    def run_live_query(opt={})
+      if realtime?
+        #nothing to do but update ttl
+        #puts "#{self} is a realtime query, nothing to do..."
+        Queris::QueryStore.refresh_flag self, :realtime
+        return extend_ttl
+      end
+      #puts "#{self} live query"
+      randstr=SecureRandom.hex
+      union_key= results_key 'delta:union'
+      temp_union_key = results_key("temp:%s:delta:union" % randstr)
+      diff_key= results_key 'delta:diff'
+      temp_diff_key = results_key("temp:%s:delta:diff" % randstr)
+
+      union_size, diff_size = redis.multi do |r|
+        r.zcard union_key
+        r.zcard diff_key
+      end
+      #puts "union-size: #{union_size}, diff-size: #{diff_size}"
+      master = Queris.redis :master
+      if master && master != redis
+        #reserve the delta sets just for us
+        #puts "rename on master"
+        master.multi do |r|
+          r.rename union_key, temp_union_key if union_size > 0
+          r.rename diff_key, temp_diff_key if diff_size > 0
+        end
+      end
+      delta_size = union_size + diff_size
+      if delta_size > 0
+        #puts "update > 0"
+        redis.multi
+        #just in case the renames from master haven't yet reached this server
+        redis.renamenx union_key, temp_union_key if union_size > 0
+        redis.renamenx diff_key, temp_diff_key if diff_size > 0
+
+        if delta_size > 100 #mmm, hardcoded optimization thresholds...
+          #there's an update available to the live query, and it's large-ish. Do it on the server
+          r.zunionstore results_key, results_key, temp_union_key if union_size > 0
+          if diff_size > 0
+            r.zunionstore results_key, results_key, temp_diff_key, aggregate: :min
+            r.zremrangebyscore results_key, '-inf', '-inf'
+          end
+          redis.exec
+        else
+          #there's an update, but it's relatively small. do it client-side
+          union_zset = redis.zrange temp_union_key, 0, -1, :with_scores => true
+          diff_set = redis.zrange temp_diff_key, 0, -1
+          redis.exec
+          redis.multi do |r|
+            union_zset.value.each { |z| r.zincrby results_key, z.last, z.first }
+            r.zrem results_key, diff_set.value
+          end
+        end
+        (master || redis).multi do |r|
+          r.del temp_union_key, temp_diff_key #we're done with these
+          extend_ttl r
+        end
+        
+      end
+    end
+    private :run_live_query
+    
+    def run_static_query(force=nil, debug=nil, use_cached_subqueries=nil)
+      @profile.start :time
+
+      master = Queris.redis :master
+
+      @subqueries.each do |q|
+        q.query(:force => force, :debug => debug) unless use_cached_subqueries
+      end
+      #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
+      @profile.start :own_time
+      debug_info = []
+      redis.multi do |pipelined_redis|
+        first_op = ops.first
+        [ops, sort_ops].each do |ops|
+          ops.each do |op|
+            op.run pipelined_redis, results_key, first_op == op
+            debug_info << [op.to_s, pipelined_redis.zcard(results_key)] if debug
+          end
+        end
+        #puts "QUERY TTL: ttl"
+        extend_ttl(pipelined_redis) if master.nil? || master == redis
+      end
+      @profile.finish :own_time
+      unless master.nil? || master == redis
+        #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
+        #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
+        master.multi do |m|
+          m.setnx results_key, 1
+          #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
+          extend_ttl m
+        end
+      end
+      set_time_cached Time.now if track_stats?
+      @profile.finish :time
+      @profile.save
+
+      unless debug_info.empty?
+        #debug_info.map {|line| "#{line.first.symbol} #{line.first.attribute} .#{line[0].value}
+        puts "Debugging query #{self}"
+        debug_info.each { |l| puts " #{l.last.value}   #{l.first}"}
+      end
+    end
+    private :run_static_query
+    
     def uses_index?(*arg)
-      opt = arg.pop if Hash === arg.last
       arg.each do |ind|
         index_name = Queris::Index === ind ? ind.name : ind.to_sym
         return true if @used_index[index_name]
