@@ -129,11 +129,11 @@ module Queris
           Queris::QueryProfiler
         end
       end
-      def live_queries
+      def live_queries(opt={})
         require "queris/query_store"
         Queris::LiveQueryIndex.new :name => '_live_queries', :model => self
         #metaquery needs a separate connection
-        if !Queris.redis(:metaquery)
+        if !(metaredis = Queris.redis(:metaquery)) || metaredis == redis
           Queris.duplicate_redis_client redis, "#{self.name}:metaquery"
         end
       end
