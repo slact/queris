@@ -97,7 +97,7 @@ module Queris
     @models.each do |model| 
       if clear
         delkeys = redis.keys "#{model.redis_prefix}*"
-        deleted = redis.del(*delkeys) unless delkeys.count == 0
+        redis.del(*delkeys) unless delkeys.count == 0
         puts "Deleted #{delkeys.count} #{self.name} keys for #{model.name}."
       end
       model.build_redis_indices false

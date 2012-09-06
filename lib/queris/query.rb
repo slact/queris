@@ -502,7 +502,7 @@ module Queris
       opt[:reverse]= true if arg.member?(:reverse)
       opt[:with_scores]=true if arg.member?(:with_scores)
       opt[:range]=arg.shift if Range === arg.first
-      opt[:range]=(arg.shift..arg.shift) if Numeric === arg[0] && arg[0].class == arg[1].class
+      first, last = arg.shift, arg.shift if Numeric === arg[0] && arg[0].class == arg[1].class
       opt[:range]=(0..arg.shift) if Numeric === arg[0]
       
       @profile.start :results_time
