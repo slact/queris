@@ -517,17 +517,17 @@ module Queris
         if (scrange = opt[:score])
           raise "query.results :score parameter must be a Range" unless Range === scrange
           raise "Can't select result range numerically and by score (pick one, not both)" if opt[:range]
-          first, last = scrange.begin, (scrange.exclude_end?  ? "(#{scrange.end}" : scrange.end)
+          first = Queris::to_redis_float(scrange.begin)
+          last = Queris::to_redis_float(scrange.end)
+          last = "(#{last}" if scrange.exclude_end?
           cmd = opt[:reverse] ? :zrevrangebyscore : :zrangebyscore
         else
           if (range = opt[:range])
             first, last = range.begin, range.end - (range.exclude_end? ? 1 : 0)
-          else
-            first, last = 0, -1
           end
           cmd = opt[:reverse] ? :zrevrange : :zrange
         end
-        res = redis.send(cmd, key, first, last, rangeopt)
+        res = redis.send(cmd, key, first || 0, last || -1, rangeopt)
       else
         res = []
       end
