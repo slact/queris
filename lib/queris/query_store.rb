@@ -41,6 +41,28 @@ module Queris
         end
         #puts "removed #{query} from QueryStore"
       end
+
+      #NOT EFFICIENT!
+      def all_metaqueries
+        q=query(self, :ttl => 20).static!
+        redis_indices(live: true).each { |i| q.union(i) }
+        q.results
+      end
+      def all_queries(opt={})
+        queries = []
+        max_score = opt[:expired] ? Time.now.to_f : 'inf'
+        res = redis.zrangebyscore redis_index(:expire).key, '-inf', max_score
+        res.reverse_each do |marshaled_query|
+          query = Marshal.load marshaled_query
+          if query
+            queries << query
+          else
+            failed << marshaled_query
+          end
+        end
+        queries
+      end
+
       end
 
       def set_flag(query, *flags)
