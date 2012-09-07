@@ -4,7 +4,7 @@ require 'securerandom'
 module Queris
   class Query
     
-    attr_accessor :redis_prefix, :ttl, :created_at, :ops, :sort_ops, :model, :params, :used_index
+    attr_accessor :redis_prefix, :ttl, :created_at, :ops, :sort_ops, :model, :params
     attr_reader :subqueries
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
