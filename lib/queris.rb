@@ -55,6 +55,9 @@ module Queris
     end
 
     def add_redis(redis, *roles)
+      if !(Redis === redis) && (Redis === roles.first) # flipped aguments. that's okay, we accept those, too
+        redis, roles = roles.first, [ redis ]
+      end
       roles << :master if roles.empty?
       roles = [] if roles.length == 1 && !roles.first
       @redis_connections << redis

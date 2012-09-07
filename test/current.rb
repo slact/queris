@@ -3,12 +3,12 @@ require "redis/connection/hiredis"
 require "redis"
 require "queris"
 
-Queris.add_redis Redis.new(:host => 'localhost', 
+Queris.add_redis :master, Redis.new(:host => 'localhost', 
                   :port => 6379, 
                   :db => 13,
                  # :logger => Logger.new(STDOUT)
                  )
-Queris.add_redis Redis.new(:host => 'willzyx', :port => 6380), :metaquery
+Queris.add_redis :metaquery, Redis.new(:host => 'willzyx', :port => 6380)
 class Bar < Queris::Model
   attrs :foo_id, :bar
 end
