@@ -162,16 +162,22 @@ module Queris
       super(*arg)
       raise Exception, "Model not passed to index." unless @model
     end
-    def metaquery(*obj_attrs)
-      q = Queris::QueryStore.query(@model, :ttl => 600)
-      [@model.redis_indices(:attributes => obj_attrs), @model.foreign_redis_indices].each do |indices|
-        indices.each { |i| q.union i }
+    def metaquery(arg={})
+      q = Queris::QueryStore.query(@model, :ttl => arg[:ttl] || Queris::QueryStore.metaquery_ttl)
+      q.static! if arg[:static]
+      @model.redis_indices(live: true, attributes: arg[:attributes]).each do |i|
+        q.union i
       end
+      q.sort :expire unless arg[:nosort]
       q
     end
     def update(obj, value=nil)
-      q = metaquery(*obj.changed)
-      q.results.each do |query|
+      if Queris::Query === obj
+        q = metaquery(nosort: true)
+      else
+        q = metaquery(attributes: obj.changed)
+      end
+      q.results(:score => Time.now.to_f..Float::INFINITY).each do |query|
         if block_given?
           yield query
         else
