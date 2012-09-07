@@ -180,7 +180,7 @@ module Queris
       end
     end
     alias :add :update
-    def delete(obj, value=nil)
+    def remove(obj, value=nil)
       update(obj, value) { |query| query.update obj, :delete => true }
     end
   end
