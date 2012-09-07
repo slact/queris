@@ -28,20 +28,30 @@ module Queris
         raise "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
         index
       end
+
+      #get all redis indices
+      #options:
+      # :foreign => true - look in foreign indices (other models' indices indexing from this model)
+      # : live => true - look in live indices
+      # ONLY ONE of the following will be respected
+      # :attributes => [...] - indices matching any of the given attribute names
+      # :names => [...] - indices with any of the given names
+      # :class => Queris::IndexClass - indices that are descendants of given class
       def redis_indices(opt={})
-        @redis_indices ||= superclass.respond_to?(:redis_indices) ? self.superclass.redis_indices.clone : []
+        indices = opt[:foreign] ? @foreign_redis_indices : (opt[:live] ? @live_redis_indices : @redis_indices)
+        indices ||= superclass.respond_to?(:redis_indices) ? self.superclass.redis_indices.clone : []
         if !opt[:attributes].nil?
           attrs = opt[:attributes].map{|v| v.to_sym}.to_set
-          @redis_indices.select { |index| attrs.member? index.attribute }
+          indices.select { |index| attrs.member? index.attribute }
+        elsif !opt[:names].nil?
+          names = opt[:names].map{|v| v.to_sym}.to_set
+          indices.select { |index| names.member? index.name }
         elsif !opt[:class].nil?
-          @redis_indices.select { |index| opt[:class] === index }
+          indices.select { |index| opt[:class] === index }
         else
-          @redis_indices
+          indices
         end
         #BUG: redis_indices is very static. superclass modifications after class declaration will not count.
-      end
-      def foreign_redis_indices
-        @foreign_redis_indices ||= []
       end
       def query_profiler; @profiler || DummyProfiler; end
       def profile_queries?; query_profiler.nil?; end
@@ -108,7 +118,7 @@ module Queris
           #define and check them here.
           #raise "Index #{index.name} (#{found.class.name}) already exists. Trying to add #{index.class.name}"
         end
-        
+        @redis_indices ||= []
         redis_indices.push index
         redis_index_hash[index.name.to_sym]=index
         redis_index_hash[index.class]=index
@@ -129,6 +139,7 @@ module Queris
           Queris::QueryProfiler
         end
       end
+      attr_accessor :live_redis_indices
       def live_queries(opt={})
         require "queris/query_store"
         Queris::LiveQueryIndex.new :name => '_live_queries', :model => self
