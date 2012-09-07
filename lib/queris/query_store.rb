@@ -13,6 +13,9 @@ module Queris
         index
       end
     end)
+    index_range_attribute name: :expire, attribute: :ttl, key: :marshaled, value: (proc do |val|
+      Time.now.to_f + val - 2 #this update doesn't happen atomically with query update, and we never want to update an expired query -- thus val - c (where c is small)
+    end)
     index_only
     
     class << self
