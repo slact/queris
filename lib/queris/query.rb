@@ -313,6 +313,7 @@ module Queris
     end
     
     def run(opt={})
+      raise "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
       @profile.id=self
       force=opt[:force] || is_stale?
       if uses_index_as_results_key?
