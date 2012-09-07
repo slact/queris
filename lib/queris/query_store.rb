@@ -78,8 +78,21 @@ module Queris
         arg[:profiler] = Queris::DummyProfiler.new
         super model, arg
       end
+      def redis_master
+        Queris::redis :metaquery
+      end
       def redis
-        @redis || model.redis(@target_model)
+        @redis || model.redis(@target_model) || redis_master
+      end
+      def static!; @live=false; @realtime=false; self; end
+      def realtime?; @realtime; end
+      def realtime!
+        live!
+        @realtime=true
+        self
+      end
+      def results_exist?
+        super(redis)
       end
       %w( union diff intersect ).each do |op|
         define_method op do |index|
