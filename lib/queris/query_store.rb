@@ -73,7 +73,6 @@ module Queris
     end
     class Metaquery < QuerisModelQuery
       def initialize(model, arg={})
-        raise "Metaqueries can't be live" if arg[:live]
         @target_model = arg[:target_model]
         arg[:profiler] = Queris::DummyProfiler.new
         super model, arg

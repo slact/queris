@@ -141,6 +141,7 @@ module Queris
       end
       attr_accessor :live_redis_indices
       def live_queries(opt={})
+        raise "Queris must have a master or metaquery redis for live queries (Queris.add_redis redis_client)." if Queris.redis(:master, :metaquery).nil?
         require "queris/query_store"
         Queris::LiveQueryIndex.new :name => '_live_queries', :model => self
         #metaquery needs a separate connection
