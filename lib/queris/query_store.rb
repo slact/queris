@@ -94,6 +94,7 @@ module Queris
       def results_exist?
         super(redis)
       end
+      def set_param_from_index(*arg); self; end
       %w( union diff intersect ).each do |op|
         define_method op do |index|
           index = @target_model.redis_index(index)
