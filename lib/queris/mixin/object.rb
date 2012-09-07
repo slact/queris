@@ -67,7 +67,7 @@ module Queris
         redis_query arg, &block
       end
       def redis_query(arg={})
-        query = Queris::Query.new self, arg
+        Queris::Query.new self, arg
       end
 
       def redis
@@ -85,7 +85,7 @@ module Queris
           index_keys.concat(redis.keys index.key "*", nil, true) #BUG - race condition may prevent all index values from being deleted
         end
         redis.multi do |redis|
-          redis.del *index_keys
+          redis.del(*index_keys)
           all.each_with_index do |row, i|
             if printy == i
               print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
@@ -197,8 +197,8 @@ module Queris
       end
       def index_attribute_for(arg)
         raise ArgumentError ,"index_attribute_for requires :model argument" unless arg[:model]
-        index = index_attribute(arg) do |index|
-          index.name = "foreign_index_#{index.name}".to_sym
+        index = index_attribute(arg) do |i|
+          i.name = "foreign_index_#{i.name}".to_sym
         end
 
         foreigner = arg[:model].send :index_attribute, arg.merge(:index=> Queris::ForeignIndex, :real_index => index)

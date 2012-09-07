@@ -1,8 +1,5 @@
 module Queris
   class QueryStore < Queris::Model
-    attr_accessor :query
-    attr_accessor :used_index
-    attribute :id
     index_attribute name: :index, attribute: :all_live_indices, key: :marshaled, value: (proc do |index|
       case index
       when Enumerable

@@ -282,6 +282,7 @@ module Queris
           master.expire results_key, ttl
         end
       end
+      #puts "updated #{self}"
       self
     end
 
@@ -516,7 +517,6 @@ module Queris
     def results(*arg)
       query
       opt= Hash === arg.last ? arg.pop : {}
-      binding.pry
       opt[:reverse]= true if arg.member?(:reverse)
       opt[:with_scores]=true if arg.member?(:with_scores)
       opt[:range]=arg.shift if Range === arg.first
