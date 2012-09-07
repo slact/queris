@@ -499,6 +499,7 @@ module Queris
           r.del results_key
           r.del results_key(:exists)
         end
+        Queris::QueryStore.remove(self) if live? && !uses_index_as_results_key?
         flushed += res.first
       end
       flushed
