@@ -842,6 +842,9 @@ module Queris
           else
             @keys << k
           end
+          if (@keys.length - num_keys) < 0
+            raise ArgumentError, "something really wrong here"
+          end
           @weights += [ operand_key_weight(op) ] * (@keys.length - num_keys)
         end
         @ready = true
