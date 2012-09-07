@@ -776,7 +776,6 @@ module Queris
     def marshaled
       Marshal.dump self
     end
-    private
 
     def each_operand #walk though all query operands
       ops.each do |operation|
@@ -785,7 +784,8 @@ module Queris
         end
       end
     end
-
+    private
+    
     class Op #query operation
       class Operand #boilerplate
         attr_accessor :index, :value
