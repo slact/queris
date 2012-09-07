@@ -23,12 +23,8 @@ module Queris
       @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
       @ttl= arg[:ttl] || 600 #10 minutes default time-to-live
-      if arg[:live]==true
-        @live = true
-      elsif Enumerable === arg[:live]
-        @live = true
-        @live_indices = arg[:live_indices] || arg[:live].map { |iname| @model.redis_index iname }
-      end
+      live! if arg[:live]
+      realtime! if arg[:realtime]
       @created_at = Time.now.utc
       if @expire_after = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
         raise "Can't create query with expire_at option and check_staleness options at once" if arg[:check_staleness]
@@ -231,16 +227,24 @@ module Queris
     def live?; @live; end
     def live=(val);  @live= val; end
     #static queries are updated only after they expire
-    def static!; @live=false; self; end
+    def static?; !live!; end
+    def static! 
+      Queris::QueryStore.clear_flag(self, 'realtime') if realtime?
+      @live=false; @realtime=false; self; 
+    end
     #live queries have pending updates stored nearby
-    def live!; @live=true; self; end
+    def live!; @live=true; @realtime=false; self; end
     #realtime queries are updated automatically, on the spot
     def realtime!
-      Queris::QueryStore.set_flag(self, 'realtime')
-      live!
+      if realtime? 
+        Queris::QueryStore.refresh_flag(self, 'realtime')
+      else
+        Queris::QueryStore.set_flag(self, 'realtime')
+        live!
+      end
     end
     def realtime?
-      live? && Queris::QueryStore.get_flag(self, 'realtime')
+      @realtime ||= live? && Queris::QueryStore.get_flag(self, 'realtime')
     end
 
     #update query results with object(s)
@@ -254,7 +258,7 @@ module Queris
           score = sort_score obj
           redis.zadd results_key, score || 0, obj.id #BUG-IN-WAITING: HARDCODED id attribute
         end
-        Queris::QueryStore.refresh_flag(self, 'realtime')
+        realtime!
         master.expire results_key, ttl #query is fresh, so its ttl gets reset
       else
         master.multi do |r|
@@ -311,7 +315,7 @@ module Queris
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
         run_static_query force, opt[:debug], opt[:use_cached_queries]
-        Queris::QueryStore.add(self) if live?
+        Queris::QueryStore.add(self) if live? && !uses_index_as_results_key?
       elsif live?
         run_live_query opt[:debug]
       else
@@ -332,7 +336,7 @@ module Queris
       if realtime?
         #nothing to do but update ttl
         #puts "#{self} is a realtime query, nothing to do..."
-        Queris::QueryStore.refresh_flag self, :realtime
+        realtime!
         return extend_ttl
       end
       #puts "#{self} live query"
