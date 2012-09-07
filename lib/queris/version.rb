@@ -1,3 +1,3 @@
 module Queris
-  VERSION = "0.6.9"
+  VERSION = "0.7.1"
 end
