@@ -104,7 +104,10 @@ module Queris
       end
 
       def query(model, arg={})
-        Metaquery.new(self, arg.merge(:target_model => model))
+        Metaquery.new(self, arg.merge(:target_model => model, :realtime => true))
+      end
+      def metaquery(arg={})
+        query(self, arg).static!
       end
 
       def find(marshaled)
