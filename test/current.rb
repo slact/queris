@@ -3,16 +3,21 @@ require "redis/connection/hiredis"
 require "redis"
 require "queris"
 
-class Foo < Queris::Model
-  attrs :a, :b, :b2, :c
-  redis Redis.new(:host => 'localhost', 
+Queris.add_redis Redis.new(:host => 'localhost', 
                   :port => 6379, 
                   :db => 13,
                  # :logger => Logger.new(STDOUT)
                  )
+Queris.add_redis Redis.new(:host => 'willzyx', :port => 6380), :metaquery
+class Bar < Queris::Model
+  attrs :foo_id, :bar
+end
+class Foo < Queris::Model
+  attrs :a, :b, :b2, :c
   index_attribute :a
   index_attributes :b, :b2, :index => Queris::DecayingAccumulatorIndex, :half_life => 604800
   index_range_attribute :c
+  index_attribute_from model: Bar, name: :bar, :attribute => :bar, :key => :foo_id
   live_queries
   #profile_queries :lite
 end
@@ -26,7 +31,7 @@ def test
   f.c = 12
   f.save
 
-  q = Foo.query :live => true
+  q = Foo.query :live => true, :ttl => 60
   q.union :a, 11
   q.union :a, 15
   q.diff :a, 12
@@ -47,11 +52,15 @@ def test
   l = Marshal.load m
   #pr = Queris::QueryProfilerLite.find(q)
 
-  r = Foo.query.union(:a, 1).union(:b,1).intersect(:c,3).intersect(Foo.query.union(:b2, 30).diff(:a, 10)).diff(:c, 15)
-  r2 = Foo.query(live: true).union(:a, 1).union(:b, 22).sort("-c")
+  r = Foo.query(live: true, ttl: 30).union(:a, 1).union(:b,1).intersect(:c,3).intersect(Foo.query.union(:b2, 30).diff(:a, 10)).diff(:c, 15)
+  r2 = Foo.query(live: true, ttl: 120).union(:a, 1).union(:b, 22).sort("-c")
   r2.query
   o = Foo.new
   o.a= 1
+  qqq=Queris::QueryStore.query(Foo, realtime: true).union(:a).union(:b).union(:b2).sort(:expire)
+  qqq.flush; qqq.count
+  mq=Queris::QueryStore.metaquery.union(:index)
+  mq.flush; mq.count
   binding.pry
   r.member? o
 end
