@@ -18,14 +18,9 @@ module Queris
     class << self
       def redis(another_model = nil)
         another_model = another_model.model if Query === another_model
-        if another_model == self
-          Queris.redis "#{another_model.name}:metaquery"
-        else
-          roles = [ :metaquery ]
-          roles.unshift("#{another_model.name}:metaquery".to_sym) if another_model
-          Queris.redis(*roles)
-        end
-        #raise "No appropriate redis connection found for QueryStore. Add a queris connection with the metaquery role (Queris.add_redis(r, :metaquery), or add live_queries to desired models." unless r
+        r = Queris.redis(another_model == self ? "metaquery:metaquery" : :metaquery)
+        raise "No appropriate redis connection found for QueryStore. Add a queris connection with the metaquery role (Queris.add_redis(r, :metaquery), or add live_queries to desired models." unless r
+        r
       end
       
       def index_to_val(index)
