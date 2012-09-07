@@ -124,7 +124,9 @@ module Queris
         redis_index_hash[index.class]=index
         index
       end
-      
+      def live_queries?
+        @live_redis_indices && @live_redis_indices.count
+      end
       private
       def redis_index_hash
         @redis_index_hash ||= superclass.respond_to?(:redis_index_hash) ? superclass.redis_index_hash.clone : {}
