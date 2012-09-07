@@ -28,10 +28,17 @@ module Queris
       end
 
       def add(query)
-        redis_indices(:class => Queris::SearchIndex).each {|i| i.add query}
+        redis.multi do |r|
+          redis_indices.each {|i| i.add query}
+        end
+        #puts "added #{query} to QueryStore"
       end
       def remove(query)
-        redis_indices(:class => Queris::SearchIndex).each {|i| i.remove query}
+        redis.multi do |r|
+          redis_indices.each { |i| i.remove query }
+        end
+        #puts "removed #{query} from QueryStore"
+      end
       end
 
       def set_flag(query, *flags)
