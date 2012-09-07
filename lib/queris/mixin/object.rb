@@ -140,13 +140,48 @@ module Queris
         end
       end
       attr_accessor :live_redis_indices
+      
+      #enable live queries on this model
+      #options:
+      # none - all indices are live
+      # indices: [name1, name2] - only consider the given indices live
+      # index: name - only given index is live
+      # blank: true - no indices are live (will probably be set later)
       def live_queries(opt={})
         raise "Queris must have a master or metaquery redis for live queries (Queris.add_redis redis_client)." if Queris.redis(:master, :metaquery).nil?
         require "queris/query_store"
         Queris::LiveQueryIndex.new :name => '_live_queries', :model => self
         #metaquery needs a separate connection
         if !(metaredis = Queris.redis(:metaquery)) || metaredis == redis
-          Queris.duplicate_redis_client redis, "#{self.name}:metaquery"
+          Queris.duplicate_redis_client((redis || Queris.redis(:master)), :metaquery)
+        end
+        if Queris::QueryStore == self
+          Queris.duplicate_redis_client((redis || Queris.redis(:metaquery)), :'metaquery:metaquery')
+        end
+        opt[:indices]||=[]
+        opt[:indices] << opt[:index] if opt[:index]
+        unless opt[:indices].empty?
+          opt[:indices].map! do |i| 
+            if (index = redis_index(i)).nil?
+              raise "Unknown index '#{i}' while preparing model for live queries"
+            end
+            index
+          end
+        end
+        
+        indices = opt[:indices].count > 0 ? opt[:indices] : redis_indices(:class => Queris::SearchIndex)
+        indices = [] if opt[:blank]
+        @live_redis_indices ||=[]
+        indices.each do |i|
+          if ForeignIndex === i
+            foreign_model = i.real_index.model
+            foreign_model.class_eval do
+              live_queries(:blank => true) unless live_queries?
+              live_redis_indices << i
+            end
+          else
+            @live_redis_indices << i
+          end
         end
       end
       def index_attribute(arg={}, &block)
