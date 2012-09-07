@@ -14,6 +14,7 @@ module Queris
       Time.now.to_f + val - 2 #this update doesn't happen atomically with query update, and we never want to update an expired query -- thus val - c (where c is small)
     end)
     index_only
+    live_queries index: :index
     
     class << self
       @metaquery_ttl = 600
