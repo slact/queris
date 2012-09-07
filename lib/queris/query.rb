@@ -329,6 +329,7 @@ module Queris
       elsif live?
         run_live_query opt[:debug]
       else
+        @profile.record :cache_hit, 1
         extend_ttl
       end
 
