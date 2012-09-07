@@ -63,7 +63,22 @@ module Queris
         queries
       end
 
+      def garbage_collect
+        total_collected, failed = 0, []
+        all_queries(:expired => true).each do |q|
+          if Query === q
+            remove q
+            #puts "Garbage-Collected #{q}"
+            total_collected += 1
+          else
+            failed << q
+          end
+        end
+        puts "Garbage collection cleaned #{total_collected} quer#{total_collected == 1 ? 'y' : 'ies'}."
+        puts "Failed to cleanup #{failed.count} non-deserializable queries" if failed.count > 0
+        return total_collected, failed
       end
+      alias :gc :garbage_collect
 
       def set_flag(query, *flags)
         if flags.count = 1
