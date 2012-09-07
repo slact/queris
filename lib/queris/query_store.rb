@@ -19,6 +19,8 @@ module Queris
     index_only
     
     class << self
+      @metaquery_ttl = 600
+      attr_accessor :metaquery_ttl
       def redis(another_model = nil)
         another_model = another_model.model if Query === another_model
         r = Queris.redis(another_model == self ? "metaquery:metaquery" : :metaquery)
