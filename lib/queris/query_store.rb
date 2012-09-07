@@ -98,7 +98,7 @@ module Queris
       %w( union diff intersect ).each do |op|
         define_method op do |index|
           index = @target_model.redis_index(index)
-          super model.redis_indices.first, QueryStore.index_to_val(index)
+          super model.redis_index(:index), QueryStore.index_to_val(index)
         end
       end
     end
