@@ -42,11 +42,16 @@ module Queris
       self
     end
 
+    def redis_master
+      Queris.redis :master
+    end
+    private :redis_master
+    
     def redis
       if live?
-        @redis || Queris.redis(:master) || model.redis
+        @redis || redis_master || model.redis
       else
-        @redis || model.redis || Queris.redis(:query, :slave, :master)
+        @redis || model.redis || Queris.redis(:slave) || redis_master
       end
     end
     
@@ -249,8 +254,11 @@ module Queris
 
     #update query results with object(s)
     def update(obj, arg={})
-      return self if uses_index_as_results_key?
-      master = Queris.redis(:master) || redis
+      if uses_index_as_results_key?
+        #puts "No need to update #{self}"
+        return self 
+      end
+      master = redis_master || redis
       if realtime? #update query in-place
         if arg[:delete] || !member?(obj)
           redis.zrem results_key, obj.id #BUG-IN-WAITING: HARDCODED id attribute
@@ -291,7 +299,7 @@ module Queris
     
     #Level Cleared. Time extended!
     def extend_ttl(r=nil)
-      return (Queris.redis(:master) || redis).multi{ |multir| extend_ttl multir } if r.nil?
+      return (redis_master || redis).multi{ |multir| extend_ttl multir } if r.nil?
       r.expire results_key, ttl
       r.setex results_key(:exists), ttl, ""
       self
@@ -299,8 +307,9 @@ module Queris
     
     #check for the existence of a result set. We need to do this in case the result set is empty
     def results_exist?(r=nil)
-      return(Queris.redis(:master) || redis).multi{ |multir| results_exist? multir }.first if r.nil?
-      r.exists results_key(:exists)
+    r ||= redis_master || redis
+    raise "No redis connection to check query existence" if r.nil?
+    r.exists results_key(:exists)
     end
     
     def run(opt={})
@@ -351,7 +360,7 @@ module Queris
         r.zcard diff_key
       end
       #puts "union-size: #{union_size}, diff-size: #{diff_size}"
-      master = Queris.redis :master
+      master = redis_master
       if master && master != redis
         #reserve the delta sets just for us
         #puts "rename on master"
@@ -397,9 +406,7 @@ module Queris
     
     def run_static_query(force=nil, debug=nil, use_cached_subqueries=nil)
       @profile.start :time
-
-      master = Queris.redis :master
-
+      master = redis_master
       @subqueries.each do |q|
         q.query(:force => force, :debug => debug) unless use_cached_subqueries
       end
@@ -487,7 +494,11 @@ module Queris
       if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index?(*arg[:index])) || block_given? && (yield sub)
         #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
         #otherwise, we'd have to create the key first (in a MULTI, of course)
-        flushed += (Queris.redis(:master) || redis).del results_key, results_key(:exists)
+        res = (redis_master || redis).multi do |r|
+          r.del results_key
+          r.del results_key(:exists)
+        end
+        flushed += res.first
       end
       flushed
     end
@@ -749,7 +760,6 @@ module Queris
         end
         arg.each { |n,v| instance_variable_set "@#{n}", v }
       end
-      @redis ||= Queris.redis :query, :slave, :master
     end
 
     def member? (obj)
