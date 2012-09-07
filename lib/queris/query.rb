@@ -937,7 +937,7 @@ module Queris
         res
       end
     end
-    
+    def used_indices; @used_index; end
     def set_param_from_index(index, val)
       index = use_index index
       @params[index.name]=val if index.respond_to? :name
