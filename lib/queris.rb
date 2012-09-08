@@ -15,8 +15,9 @@ module Queris
   @redis_connections=[]
   @redis_by_role={}
   @debug=false
-  
+  @redis_scripts={}
   class << self
+    attr_accessor :redis_scripts
     attr_accessor :debug
     def debug?; @debug; end
   
@@ -66,6 +67,13 @@ module Queris
         @redis_by_role[role]||=[]
         @redis_by_role[role] << redis
       end
+      
+      #throw our lua scripts onto the server
+      redis_scripts.each do |name, contents|
+        hash = redis.script 'load', contents
+        raise "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
+      end
+      
       if Object.const_defined? 'ActiveSupport'
         #the following is one ugly monkey(patch).
         # we assume that, since we're in Railsworld, the Redis logger
@@ -165,6 +173,32 @@ module Queris
       else
         val.to_f
       end
+    end
+    
+    def script(name)
+      redis_scripts[name.to_sym]
+    end
+
+    def script_hash(name)
+      name = name.to_sym
+      @script_hash||={}
+      unless (hash=@script_hash[name])
+        contents = script(name)
+        raise "Unknown redis script #{name}." unless contents
+        hash = Digest::SHA1.hexdigest contents
+        @script_hash[name] = hash
+      end
+      hash
+    end
+    
+    def load_lua_script(name, contents)
+      redis_scripts[name.to_sym]=contents
+    end
+    #load redis lua scripts
+    Dir[File.join(File.dirname(__FILE__),'queris/redis_scripts/*.lua')].each do |path|
+      name = File.basename path, '.lua'
+      script = IO.read(path)
+      Queris.load_lua_script(name, script)
     end
   end
 end
