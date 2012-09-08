@@ -73,18 +73,31 @@ module Queris
         hash = redis.script 'load', contents
         raise "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
       end
-      
-      if Object.const_defined? 'ActiveSupport'
-        #the following is one ugly monkey(patch).
-        # we assume that, since we're in Railsworld, the Redis logger
-        # is up for grabs. It would be cleaner to wrap the redis client in a class, 
-        # but I'm coding dirty for brevity. 
-        # THIS MUST BE ADDRESSED IN THE FUTURE
-        
-        class << redis.client
-          protected
+
+      #bolt on our custom logger
+      class << redis.client
+        protected
+        alias :_default_logging :logging
+        if Object.const_defined? 'ActiveSupport'
+          #the following is one ugly monkey(patch).
+          # we assume that, since we're in Railsworld, the Redis logger
+          # is up for grabs. It would be cleaner to wrap the redis client in a class, 
+          # but I'm coding dirty for brevity. 
+          # THIS MUST BE ADDRESSED IN THE FUTURE
           def logging(commands)
-            ActiveSupport::Notifications.instrument("command.queris") { yield }
+            ActiveSupport::Notifications.instrument("command.queris") do
+              start = Time.now.to_f
+              ret = _default_logging(commands) { yield }
+              Queris::RedisStats.record(self, Time.now.to_f - start)
+              ret
+            end
+          end
+        else
+          def logging(commands)
+            start = Time.now.to_f
+            ret = _default_logging(commands) { yield }
+            Queris::RedisStats.record(self, Time.now.to_f - start)
+            ret
           end
         end
       end
@@ -207,6 +220,38 @@ module Queris
       name = File.basename path, '.lua'
       script = IO.read(path)
       Queris.load_lua_script(name, script)
+    end
+  end
+  
+  class RedisStats
+    class << self
+      def record(redis, time)
+        @time ||= {}
+        @roundtrips ||= {}
+        @time[redis] = (@time[redis] || 0) + time
+        @roundtrips[redis] = (@roundtrips[redis] || 0) + 1
+        self
+      end
+      def time(redis)
+        (@time || {})[redis.client] || '?'
+      end
+      def roundtrips(redis)
+        (@roundtrips || {})[redis.client] || '?'
+      end
+      def reset
+        binding.pry
+        (@time || {}).clear
+        (@roundtrips || {}).clear
+        self
+      end
+      def summary
+        format = "%-20s %-7s %s"
+        ret = Queris.all_redises.map do |r|
+          format % [Queris.redis_role(r) || r.host, time(r).round(3), roundtrips(r)]
+        end
+        ret.unshift(format % ["Role", "Time", "Roundtrips"]) if ret.count>0
+        ret.empty? ? "no data" : ret.join("\r\n")
+      end
     end
   end
 end
