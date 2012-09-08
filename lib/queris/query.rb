@@ -545,11 +545,15 @@ module Queris
           end
           cmd = opt[:reverse] ? :zrevrange : :zrange
         end
-        res = redis.send(cmd, key, first || 0, last || -1, rangeopt)
+        if block_given? && opt[:replace_command]
+          res = yield cmd, key, first, last, rangeopt
+        else
+          res = redis.send(cmd, key, first || 0, last || -1, rangeopt)
+        end
       else
         res = []
       end
-      if block_given?
+      if block_given? && !opt[:replace_command]
         if opt[:with_scores]
           ret = []
           res.each do |r|
