@@ -24,6 +24,9 @@ module Queris
       def find_all
         find :all
       end
+      def stored_in_redis?
+        redis_index(:all_attribute_hashcache, Queris::HashCache)
+      end
       def find_cached(id, cache_it=true)
         #POTENTIAL OPTIMIZATION: accept Enumerable id, pipeline redis commands
         cache = redis_index :all_attribute_hashcache, Queris::HashCache

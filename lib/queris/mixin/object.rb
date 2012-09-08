@@ -239,6 +239,9 @@ module Queris
         Queris.register_model self
         Queris::HashCache.new :model => self
       end
+      def stored_in_redis?
+        nil
+      end
       alias :cache_object :cache_all_attributes
       def cache_attribute_from(arg)
         arg[:index]=Queris::HashCache
