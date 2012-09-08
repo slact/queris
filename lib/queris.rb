@@ -140,3 +140,11 @@ if Object.const_defined? 'Rails'
   require "rails/log_subscriber"
   require "rails/request_timing"
 end
+#ugly rake hooks
+if Object.const_defined? 'Rake'
+  class QuerisTasks < Rails::Railtie
+    rake_tasks do
+      Dir[File.join(File.dirname(__FILE__),'tasks/*.rake')].each { |f| load f }
+    end
+  end
+end
