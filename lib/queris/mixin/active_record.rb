@@ -24,6 +24,9 @@ module Queris
       def find_all
         find :all
       end
+      def stored_in_redis?
+        redis_index(:all_attribute_hashcache, Queris::HashCache)
+      end
       def find_cached(id, cache_it=true)
         #POTENTIAL OPTIMIZATION: accept Enumerable id, pipeline redis commands
         cache = redis_index :all_attribute_hashcache, Queris::HashCache
@@ -58,8 +61,29 @@ module Queris
     end
 
     def results(*arg)
-      super(*arg) do |id|
-        @model.find_cached id
+      if (hashcache_index = model.stored_in_redis?)
+        arg.push({}) unless Hash === arg.last
+        arg.last.merge! :replace_command => true
+        ret = []
+        super(*arg) do |cmd, key, first, last, rangeopt|
+          raise "Results with_scores not yet implemented efficiently. Use raw_results if you must have scores." if rangeopt[:with_scores]
+          res, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, hashcache_index.key('%s',nil,true)])
+          res.each_with_index do |h, i|
+            if failed_i.first == i
+              failed_i.shift
+              obj = model.find_cached(h)
+            else
+              hash = Hash[*h] if Array === h
+              obj = hashcache_index.load_cached(hash)
+            end
+            ret << obj if obj
+          end
+        end
+        ret
+      else
+        super(*arg) do |id|
+          @model.find_cached id
+        end
       end
     end
 

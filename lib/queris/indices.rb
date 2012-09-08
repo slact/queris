@@ -89,7 +89,11 @@ module Queris
     def self.skip_create?; true; end
     
     def hash_key(obj, prefix=nil, raw_val=false)
-      id = obj.kind_of?(@model) ? obj.send(@key) : obj
+      if raw_val
+        id = obj
+      else
+        id = obj.kind_of?(@model) ? obj.send(@key) : obj
+      end
       (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, id]
     end
     alias :key :hash_key
@@ -116,29 +120,33 @@ module Queris
     
     def fetch(id)
       if @attribute.nil?
-        hash = Queris.query_redis.hgetall hash_key id
-        @cached_attr_count ||= (not @attribute.nil?) ? 1 : @model.new.all_cacheable_attributes.length #this line could be a problem if more cacheable attributes are added after the first fetch.
-        begin
-          if hash.length >= @cached_attr_count
-            unmarshaled = {}
-            hash.each_with_index do |v|
-              unmarshaled[v.first.to_sym]=Marshal.load v.last
-            end
-            obj= @model.new
-            obj.assign_attributes(unmarshaled, :without_protection => true)
-            obj.instance_eval do
-              @new_record= false 
-              @changed_attributes={}
-            end
-            obj
-          else
-            nil
+        hash = Queris.redis(:slave, :master).hgetall hash_key id
+        load_cached hash
+      else
+        return Queris.redis(:slave, :master).hget hash_key(id), @attribute
+      end
+    end
+    
+    def load_cached(marshaled_hash)
+      @cached_attr_count ||= (not @attribute.nil?) ? 1 : @model.new.all_cacheable_attributes.length #this line could be a problem if more cacheable attributes are added after the first fetch.
+      begin
+        if marshaled_hash.length >= @cached_attr_count
+          unmarshaled = {}
+          marshaled_hash.each_with_index do |v|
+            unmarshaled[v.first.to_sym]=Marshal.load v.last
           end
-        rescue ActiveRecord::UnknownAttributeError
+          obj= @model.new
+          obj.assign_attributes(unmarshaled, :without_protection => true)
+          obj.instance_eval do
+            @new_record= false 
+            @changed_attributes={}
+          end
+          obj
+        else
           nil
         end
-      else
-        return Queris.query_redis.hget hash_key(id), @attribute
+      rescue ActiveRecord::UnknownAttributeError
+        nil
       end
     end
     

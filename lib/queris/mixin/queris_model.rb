@@ -21,6 +21,7 @@ module Queris
         end
         ret
       end
+      def stored_in_redis?; true; end
       def can_increment_attribute?( attr_name )
         @incremental_attr[attr_name.to_sym]
       end
