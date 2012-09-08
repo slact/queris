@@ -110,7 +110,15 @@ module Queris
     end
 
     def all_redises; @redis_connections; end
-    
+    def redis_role(redis)
+      @redis_by_role.each do |role, redises|
+        if Redis::Client === redis
+          return role if redises.map{|r| r.client}.member? redis
+        else
+          return role if redises.member? redis
+        end
+      end
+    end
     attr_accessor :models
     
     def register_model(model)
