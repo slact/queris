@@ -239,7 +239,6 @@ module Queris
         (@roundtrips || {})[redis.client] || '?'
       end
       def reset
-        binding.pry
         (@time || {}).clear
         (@roundtrips || {}).clear
         self
