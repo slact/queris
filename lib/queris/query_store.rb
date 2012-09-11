@@ -21,7 +21,11 @@ module Queris
       attr_accessor :metaquery_ttl
       def redis(another_model = nil)
         another_model = another_model.model if Query === another_model
-        r = Queris.redis(another_model == self ? "metaquery:metaquery" : :metaquery)
+        if another_model == self
+          r = Queris.redis "metaquery:metaquery"
+        else
+          r= Queris.redis :'metaquery:slave', :metaquery
+        end
         raise "No appropriate redis connection found for QueryStore. Add a queris connection with the metaquery role (Queris.add_redis(r, :metaquery), or add live_queries to desired models." unless r
         r
       end
