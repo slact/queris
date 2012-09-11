@@ -352,58 +352,11 @@ module Queris
         return extend_ttl
       end
       #puts "#{self} live query"
-      randstr=SecureRandom.hex
       union_key= results_key 'delta:union'
-      temp_union_key = results_key("temp:%s:delta:union" % randstr)
       diff_key= results_key 'delta:diff'
-      temp_diff_key = results_key("temp:%s:delta:diff" % randstr)
 
-      union_size, diff_size = redis.multi do |r|
-        r.zcard union_key
-        r.zcard diff_key
-      end
-      #puts "union-size: #{union_size}, diff-size: #{diff_size}"
-      master = redis_master
-      if master && master != redis
-        #reserve the delta sets just for us
-        #puts "rename on master"
-        master.multi do |r|
-          r.rename union_key, temp_union_key if union_size > 0
-          r.rename diff_key, temp_diff_key if diff_size > 0
-        end
-      end
-      delta_size = union_size + diff_size
-      if delta_size > 0
-        #puts "update > 0"
-        redis.multi
-        #just in case the renames from master haven't yet reached this server
-        redis.renamenx union_key, temp_union_key if union_size > 0
-        redis.renamenx diff_key, temp_diff_key if diff_size > 0
-
-        if delta_size > 100 #mmm, hardcoded optimization thresholds...
-          #there's an update available to the live query, and it's large-ish. Do it on the server
-          r.zunionstore results_key, results_key, temp_union_key if union_size > 0
-          if diff_size > 0
-            r.zunionstore results_key, results_key, temp_diff_key, aggregate: :min
-            r.zremrangebyscore results_key, '-inf', '-inf'
-          end
-          redis.exec
-        else
-          #there's an update, but it's relatively small. do it client-side
-          union_zset = redis.zrange temp_union_key, 0, -1, :with_scores => true
-          diff_set = redis.zrange temp_diff_key, 0, -1
-          redis.exec
-          redis.multi do |r|
-            union_zset.value.each { |z| r.zincrby results_key, z.last, z.first }
-            r.zrem results_key, diff_set.value
-          end
-        end
-        (master || redis).multi do |r|
-          r.del temp_union_key, temp_diff_key #we're done with these
-          extend_ttl r
-        end
-        
-      end
+      #all live operations happen on master
+      (redis_master || redis).evalsha Queris.script_hash(:apply_query_delta), [results_key, union_key, diff_key]
     end
     private :run_live_query
     
