@@ -259,28 +259,27 @@ module Queris
         #puts "No need to update #{self}"
         return self 
       end
-      master = redis_master || redis
-      if realtime? #update query in-place
-        if arg[:delete] || !member?(obj)
-          redis.zrem results_key, obj.id #BUG-IN-WAITING: HARDCODED id attribute
+      (redis_master || redis).multi do |r|
+        if realtime? #update query in-place
+          if arg[:delete] || !member?(obj)
+            r.zrem results_key, obj.id #BUG-IN-WAITING: HARDCODED id attribute
+          else
+            r.zadd results_key, sort_score(obj) || 0, obj.id #BUG-IN-WAITING: HARDCODED id attribute
+          end
+          realtime!
+          extend_ttl r #query is current now
         else
-          score = sort_score obj
-          redis.zadd results_key, score || 0, obj.id #BUG-IN-WAITING: HARDCODED id attribute
-        end
-        realtime!
-        master.expire results_key, ttl #query is fresh, so its ttl gets reset
-      else
-        master.multi do |r|
           if arg[:delete] || !member?(obj)
             delta_key = results_key('delta:diff')
             r.zadd delta_key, '-inf', obj.id #BUG-IN-WAITING: HARDCODED id attribute
           else
-            #differential score because Z*STORE commands can aggregate scores only with addition (also MIN & MAX, but we don't care about those. If only there were a LAST or OVERRIDE aggregate function)
-            score = sort_score(obj) - sort_score(obj, previous: true)
-            r.zincrby results_key('delta:union'), score || 0, obj.id #BUG-IN-WAITING: HARDCODED id attribute
+            # we used to need a differential score for a later ZUNIONSTORE (with an ADD score aggregate function)
+            # but now we use a lua script to merge stuff, so we don't care anymore.
+            # score = sort_score(obj) - sort_score(obj, previous: true)
+            delta_key = results_key('delta:union')
+            r.zadd delta_key, sort_score(obj), obj.id #BUG-IN-WAITING: HARDCODED id attribute
           end
-          r.expire delta_key, ttl
-          master.expire results_key, ttl
+          r.evalsha Queris.script_hash(:copy_ttl), [results_key, delta_key]
         end
       end
       #puts "updated #{self}"
