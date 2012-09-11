@@ -325,7 +325,7 @@ module Queris
       elsif force || !results_exist?
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
-        run_static_query force, opt[:debug], opt[:use_cached_queries]
+        run_static_query force, opt[:debug], opt[:forced_results_redis]
         Queris::QueryStore.add(self) if live? && !uses_index_as_results_key?
       elsif live?
         run_live_query opt[:debug]
@@ -359,17 +359,22 @@ module Queris
       (redis_master || redis).evalsha Queris.script_hash(:apply_query_delta), [results_key, union_key, diff_key]
     end
     private :run_live_query
-    
-    def run_static_query(force=nil, debug=nil, use_cached_subqueries=nil)
+
+    attr_accessor :share_results
+    def share_results? #run query on master or slave
+      live? || @share_results
+    end
+    def share_results!; @share_results = true; self; end
+    def run_static_query(force=nil, debug=nil, forced_results_redis=nil)
       @profile.start :time
       master = redis_master
       @subqueries.each do |q|
-        q.query(:force => force, :debug => debug) unless use_cached_subqueries
+        q.query(:force => force, :debug => debug, :forced_results_redis => results_redis) if subq_exist[q].value
       end
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
       @profile.start :own_time
       debug_info = []
-      redis.multi do |pipelined_redis|
+      results_redis.multi do |pipelined_redis|
         first_op = ops.first
         [ops, sort_ops].each do |ops|
           ops.each do |op|
@@ -378,10 +383,12 @@ module Queris
           end
         end
         #puts "QUERY TTL: ttl"
-        extend_ttl(pipelined_redis) if master.nil? || master == redis
+        if results_redis == master
+          extend_ttl(pipelined_redis)
+        end
       end
       @profile.finish :own_time
-      unless master.nil? || master == redis
+      unless master.nil? || master == results_redis
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
         #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
         master.multi do |m|
