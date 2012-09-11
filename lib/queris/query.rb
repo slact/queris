@@ -44,7 +44,7 @@ module Queris
     end
 
     def redis_master
-      Queris.redis :master
+      Queris.redis :master || @redis || @model.redis
     end
     private :redis_master
     
