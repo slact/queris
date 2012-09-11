@@ -12,6 +12,7 @@ module Queris
       elsif arg.nil?
         arg= {}
       end
+      raise "Can't create query without a model" unless model
       raise "include Queris in your model (#{model.inspect})." unless model.include? Queris
       @model = model
       @params = {}
@@ -656,7 +657,7 @@ module Queris
     end
     
     def explain(opt={})
-      return "(∅)" if ops.empty?
+      return "(∅)" if ops.nil? || ops.empty?
       first_op = ops.first
       r = ops.map do |op|
         operands = op.operands.map do |o|
@@ -680,9 +681,9 @@ module Queris
         end
         op_str = operands.join " #{op.symbol} "
         if first_op == op
-          op_str.prepend "∅ #{op.symbol} " if DiffOp === op
+          op_str.insert 0, "∅ #{op.symbol} " if DiffOp === op
         else
-          op_str.prepend " #{op.symbol} "
+          op_str.insert 0, " #{op.symbol} "
         end
         op_str
       end
