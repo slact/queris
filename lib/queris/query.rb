@@ -369,9 +369,19 @@ module Queris
     def run_static_query(force=nil, debug=nil, forced_results_redis=nil)
       @profile.start :time
       master = redis_master
-      @subqueries.each do |q|
-        q.query(:force => force, :debug => debug, :forced_results_redis => results_redis) if subq_exist[q].value
+      results_redis = forced_results_redis || share_results? ? master : redis
+      # we must use the same redis server everywhere to prevent replication race conditions
+      # (query on slave, subquery on master that doesn't finish replicating to slave when the query needs subquery results)
+      # redis cluster should, I suspect, provide the tools to address this in the future.
+      subq_exist ={} 
+      results_redis.multi do |r|
+        @subqueries.each { |q| subq_exist[q] = q.results_exist? r }
       end
+      subq_exist.each do |q, exist|
+        next if exist.value
+        q.query :force => force, :debug => debug, :forced_results_redis => results_redis
+      end
+      
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
       @profile.start :own_time
       debug_info = []
