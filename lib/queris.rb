@@ -74,6 +74,23 @@ module Queris
         raise "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
       end
 
+      
+      attr_accessor :track_stats
+      def track_stats?
+        @track_stats
+      end
+      def track_stats!
+        track_stats = true
+      end
+      attr_accessor :log_stats_per_request
+      def log_stats_per_request?
+        @log_stats_per_request
+      end
+      def log_stats_per_request!
+        track_stats!
+        log_stats_per_request = true
+      end
+      
       #bolt on our custom logger
       class << redis.client
         protected
@@ -88,7 +105,7 @@ module Queris
             ActiveSupport::Notifications.instrument("command.queris") do
               start = Time.now.to_f
               ret = _default_logging(commands) { yield }
-              Queris::RedisStats.record(self, Time.now.to_f - start)
+              Queris::RedisStats.record(self, Time.now.to_f - start) if Queris.track_stats?
               ret
             end
           end
@@ -96,7 +113,7 @@ module Queris
           def logging(commands)
             start = Time.now.to_f
             ret = _default_logging(commands) { yield }
-            Queris::RedisStats.record(self, Time.now.to_f - start)
+            Queris::RedisStats.record(self, Time.now.to_f - start) if Queris.track_stats?
             ret
           end
         end
@@ -233,10 +250,10 @@ module Queris
         self
       end
       def time(redis)
-        (@time || {})[redis.client] || '?'
+        (@time || {})[redis.client] || 0
       end
       def roundtrips(redis)
-        (@roundtrips || {})[redis.client] || '?'
+        (@roundtrips || {})[redis.client] || 0
       end
       def reset
         (@time || {}).clear
