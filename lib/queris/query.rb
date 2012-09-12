@@ -897,7 +897,7 @@ module Queris
         super(index, reverse ? -1 : 1)
       end
       def target_key_weight; 0; end
-      def operand_key_weight(op); 1; end
+      def operand_key_weight(op); op.value; end
     end
     
     def use_index *arg
