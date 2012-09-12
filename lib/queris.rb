@@ -74,13 +74,11 @@ module Queris
         raise "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
       end
 
-      
-      attr_accessor :track_stats
       def track_stats?
         @track_stats
       end
       def track_stats!
-        track_stats = true
+        @track_stats = true
       end
       attr_accessor :log_stats_per_request
       def log_stats_per_request?
@@ -88,7 +86,7 @@ module Queris
       end
       def log_stats_per_request!
         track_stats!
-        log_stats_per_request = true
+        @log_stats_per_request = true
       end
       
       #bolt on our custom logger
