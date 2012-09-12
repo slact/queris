@@ -329,7 +329,7 @@ module Queris
         run_static_query force, opt[:debug], opt[:forced_results_redis]
         Queris::QueryStore.add(self) if live? && !uses_index_as_results_key?
       elsif live?
-        run_live_query opt[:debug]
+        run_live_query opt[:no_update]
       else
         @profile.record :cache_hit, 1
         extend_ttl
@@ -345,13 +345,14 @@ module Queris
     end
     alias :query :run
 
-    def run_live_query(opt={})
+    def run_live_query(skip_update = nil)
       if realtime?
         #nothing to do but update ttl
         #puts "#{self} is a realtime query, nothing to do..."
         realtime!
         return extend_ttl
       end
+      return if skip_update
       #puts "#{self} live query"
       union_key= results_key 'delta:union'
       diff_key= results_key 'delta:diff'
@@ -486,7 +487,7 @@ module Queris
     #results(x..y, :reverse) range in reverse
     #results(x..y, :with_scores) return scores with results as [ [score1, res1], [score2, res2] ... ]
     def results(*arg)
-      query
+      run :no_update => true
       opt= Hash === arg.last ? arg.pop : {}
       opt[:reverse]= true if arg.member?(:reverse)
       opt[:with_scores]=true if arg.member?(:with_scores)
@@ -543,7 +544,7 @@ module Queris
     alias :raw_results :results
     
     def contains?(id)
-      query
+      run :no_update => true
       case redis.type(results_key)
       when 'set'
         redis.sismember(results_key, id)
@@ -592,7 +593,7 @@ module Queris
     end
     
     def length
-      query
+      run :no_update => true
       key = results_key
       case redis.type(key)
       when 'set'
