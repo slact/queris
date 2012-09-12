@@ -386,19 +386,22 @@ module Queris
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
       @profile.start :own_time
       debug_info = []
-      results_redis.multi do |pipelined_redis|
+      temp_results_key = results_key "querying:#{SecureRandom.hex}"
+      #results_redis.pipelined do |pipelined_redis|
+      pipelined_redis = results_redis
         first_op = ops.first
         [ops, sort_ops].each do |ops|
           ops.each do |op|
-            op.run pipelined_redis, results_key, first_op == op
-            debug_info << [op.to_s, pipelined_redis.zcard(results_key)] if debug
+            op.run pipelined_redis, temp_results_key, first_op == op
+            debug_info << [op.to_s, pipelined_redis.zcard(temp_results_key)] if debug
           end
         end
+        pipelined_redis.evalsha Queris.script_hash(:rename_if_present), [temp_results_key, results_key]
         #puts "QUERY TTL: ttl"
         if results_redis == master
           extend_ttl(pipelined_redis)
         end
-      end
+      #end
       @profile.finish :own_time
       unless master.nil? || master == results_redis
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
