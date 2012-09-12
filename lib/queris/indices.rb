@@ -20,8 +20,10 @@ module Queris
       raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
     end
-    def redis
-      @redis || @model.redis || Queris.redis(:index, :slave, :master)
+    def redis(obj=nil)
+      r=@redis || @model.redis || Queris.redis(:index, :slave, :master) || (!obj.nil? && obj.redis)
+      raise "No redis connection found for Queris Index #{name}" unless r
+      r
     end
     def skip_create?
       @skip_create
@@ -115,7 +117,7 @@ module Queris
     end
     
     def delete(obj)
-      (redis || obj.redis).del hash_key obj
+      redis(obj).del hash_key obj
     end
     
     def fetch(id)
@@ -220,15 +222,15 @@ module Queris
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
       if value.kind_of?(Enumerable)
-        value.each{|val| (redis || obj.redis).sadd set_key(val), obj.send(@key)}
+        value.each{|val| redis(obj).sadd set_key(val), obj.send(@key)}
       else
-        (redis || obj.redis).sadd set_key(value), obj.send(@key)
+        redis(obj).sadd set_key(value), obj.send(@key)
       end
     end
     def remove(obj, value = nil)
       value = index_val( value || obj.send(@attribute), obj)
       (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
-        (redis || obj.redis).srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
+        redis(obj).srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
       end
     end
   end
@@ -268,17 +270,17 @@ module Queris
       @counter_keyf % (val || value_is(obj))
     end
     def add(obj, value=nil)
-      k = (redis || obj.redis).incr counter_key(obj)
+      k = redis(obj).incr counter_key(obj)
       if k == @threshold
         super obj
       end
     end
     def remove(obj, value=nil)
       ckey = counter_key obj
-      redis = (redis || obj.redis)
-      redis.decr ckey
-      if redis.get(ckey).to_i. < @threshold
-        redis.del ckey
+      r = redis(obj)
+      r.decr ckey
+      if r.get(ckey).to_i. < @threshold
+        r.del ckey
         super obj
       end
     end
@@ -315,16 +317,16 @@ module Queris
       my_val = val(value || value_is(obj), obj)
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
-      (redis || obj.redis).zadd sorted_set_key, my_val, obj.send(@key)
+      redis(obj).zadd sorted_set_key, my_val, obj.send(@key)
     end
     
     def increment(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
-      (redis || obj.redis).zincrby sorted_set_key, my_val, obj.send(@key)
+      redis(obj).zincrby sorted_set_key, my_val, obj.send(@key)
     end
 
     def remove(obj, value=nil)
-      (redis || obj.redis).zrem sorted_set_key, obj.send(@key)
+      redis(obj).zrem sorted_set_key, obj.send(@key)
     end
 
     def before_query_op(redis, results_key, val, op=nil)
@@ -380,9 +382,9 @@ module Queris
   
   class CountIndex < RangeIndex
     def incrby(obj, val)
-      (redis || obj.redis).zincrby sorted_set_key, val, obj.send(@key)
+      redis(obj).zincrby sorted_set_key, val, obj.send(@key)
       if val<0 
-        (redis || obj.redis).zremrangebyscore sorted_set_key, 0, '-inf'
+        redis(obj).zremrangebyscore sorted_set_key, 0, '-inf'
         #WHOA THERE. We just went O(log(N)) on this simple and presumably O(1) index update. That's bad. 
         #TODO: probabilistically run every 1/log(N) times or less. Average linear complexity for a modicum of win.
       end
