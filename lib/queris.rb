@@ -32,7 +32,7 @@ module Queris
       raise "Not a redis client" unless Redis === redis
       cl = redis.client
       raise "Redis client doesn't have connection info (Can't get client info while in a redis.multi block... for now...)" unless cl.host
-      r = Redis.new({scheme:    cl.scheme,
+      r = Redis.new({
                     port:      cl.port,
                     host:      cl.host,
                     path:      cl.path,
