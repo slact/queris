@@ -34,6 +34,7 @@ module Queris
       # :foreign => true - look in foreign indices (other models' indices indexing from this model)
       # : live => true - look in live indices
       # ONLY ONE of the following will be respected
+      # :except => [index_name, ...] - exclude these
       # :attributes => [...] - indices matching any of the given attribute names
       # :names => [...] - indices with any of the given names
       # :class => Queris::IndexClass - indices that are descendants of given class
@@ -43,6 +44,9 @@ module Queris
         if !opt[:attributes].nil?
           attrs = opt[:attributes].map{|v| v.to_sym}.to_set
           indices.select { |index| attrs.member? index.attribute }
+        elsif opt[:except]
+          except = Array === opt[:except] ? opt[:except] : [ opt[:except] ]
+          indices.select { |index| !except.member? index.name }
         elsif !opt[:names].nil?
           names = opt[:names].map{|v| v.to_sym}.to_set
           indices.select { |index| names.member? index.name }
