@@ -40,12 +40,11 @@ namespace :queris do
     model.build_redis_index index.name
   end 
 
-  desc "Garbage-collect expired live queries from QueryStore"
-  task :gc => :environment do
+  desc "Clear all object caches"
+  task :clear_cache => :environment do
+    puts "weee"
     load_models
-    unless Queris.const_defined? 'QueryStore'
-      abort "No live queries in any of your models, nothing to do."
-    end
-    Queris::QueryStore.gc
+    puts "loaded models"
+    puts "Deleted #{Queris.clear_cache!} cache keys."
   end
 end
