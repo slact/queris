@@ -20,11 +20,15 @@ module Queris
       raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
     end
+    def key_attr
+      @key
+    end
     def redis(obj=nil)
       r=@redis || @model.redis || Queris.redis(:index, :slave, :master) || (!obj.nil? && obj.redis)
       raise "No redis connection found for Queris Index #{name}" unless r
       r
     end
+    def update_last?; false; end
     def skip_create?
       @skip_create
     end
@@ -168,6 +172,7 @@ module Queris
   
   class LiveQueryIndex < Index
     def self.skip_create?; true; end
+    def update_last?; true; end
     def initialize(*arg)
       super(*arg)
       raise Exception, "Model not passed to index." unless @model
@@ -175,30 +180,53 @@ module Queris
     def metaquery(arg={})
       q = Queris::QueryStore.query(@model, :ttl => arg[:ttl] || Queris::QueryStore.metaquery_ttl)
       q.static! if arg[:static]
-      @model.redis_indices(live: true, attributes: arg[:attributes]).each do |i|
-        q.union i
+      unless arg[:blank]
+        @model.redis_indices(live: true, attributes: arg[:attributes]).each do |i|
+          q.union i
+        end
       end
-      q.sort :expire unless arg[:nosort]
       q
     end
-    def update(obj, value=nil)
-      if Queris::Query === obj
-        q = metaquery(nosort: true)
+    def update(obj, value=nil, arg={})
+      queries={}
+      if Query === obj
+        indices = obj.all_live_indices
       else
-        q = metaquery(attributes: obj.changed)
-      end
-      q.results(:score => Time.now.to_f..Float::INFINITY).each do |query|
-        if block_given?
-          yield query
+        if arg[:delete]
+          indices = @model.redis_indices(live: true)
         else
-          query.update obj
+          indices = @model.redis_indices(live: true, attributes: obj.changed)
+        end
+      end
+
+      indices.each do |i|
+        if ForeignIndex === i && !(Query === obj)
+          queries[i] ||= [i.foreign_id(obj), metaquery(blank: true).union(i)]
+        else
+          queries[:native] ||= [obj, metaquery(blank: true)]
+          queries[:native].last.union(i)
+        end
+      end
+      queries.each do |i, qpack|
+        update_obj, metaq = *qpack
+        if Query === update_obj
+          metaq.update update_obj, arg
+          next
+        end
+        metaq.results_with_gc.each do |query|
+          if ForeignIndex === i
+            old_id = obj.send "#{i.key_attr}_was"
+            query.update old_id, :delete => true if old_id && old_id.to_s != obj.send(i.key_attr).to_s
+          end
+          query.update update_obj, arg
         end
       end
     end
     alias :add :update
     def remove(obj, value=nil)
-      update(obj, value) { |query| query.update obj, :delete => true }
+      update(obj, value, :delete => true)
     end
+    alias :delete :remove
   end
   
   class SearchIndex < Index
@@ -251,6 +279,9 @@ module Queris
       @real_index.key(*arg)
     end
 
+    def foreign_id(obj)
+      obj.send(@key)
+    end
     def method_missing(method)
       @real_index.method
     end

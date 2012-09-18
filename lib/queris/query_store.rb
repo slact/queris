@@ -10,11 +10,8 @@ module Queris
         index
       end
     end)
-    index_range_attribute name: :expire, attribute: :ttl, key: :marshaled, value: (proc do |val|
-      Time.now.to_f + val - 2 #this update doesn't happen atomically with query update, and we never want to update an expired query -- thus val - c (where c is small)
-    end)
     index_only
-    live_queries index: :index
+    live_queries
     
     class << self
       @metaquery_ttl = 600
@@ -37,6 +34,7 @@ module Queris
       def add(query)
         redis.pipelined do
           redis_indices.each {|i| i.add query}
+          update query
         end
         #puts "added #{query} to QueryStore"
       end
@@ -46,6 +44,11 @@ module Queris
         end
         #puts "removed #{query} from QueryStore"
       end
+      def update(query)
+        redis.pipelined do
+          redis.setex, "Queris:Metaquery:expire:#{query.marshaled}", query.ttl
+        end
+      end
 
       #NOT EFFICIENT!
       def all_metaqueries
@@ -53,66 +56,12 @@ module Queris
         redis_indices(live: true).each { |i| q.union(i) }
         q.results
       end
-      def all_queries(opt={})
-        queries = []
-        max_score = opt[:expired] ? Time.now.to_f : 'inf'
-        res = redis.zrangebyscore redis_index(:expire).key, '-inf', max_score
-        res.reverse_each do |marshaled_query|
-          query = Marshal.load marshaled_query
-          if query
-            queries << query
-          else
-            failed << marshaled_query
-          end
-        end
-        queries
-      end
-
-      def garbage_collect
-        total_collected, failed = 0, []
-        all_queries(:expired => true).each do |q|
-          if Query === q
-            remove q
-            #puts "Garbage-Collected #{q}"
-            total_collected += 1
-          else
-            failed << q
-          end
-        end
-        puts "Garbage collection cleaned #{total_collected} quer#{total_collected == 1 ? 'y' : 'ies'}."
-        puts "Failed to cleanup #{failed.count} non-deserializable queries" if failed.count > 0
-        return total_collected, failed
-      end
-      alias :gc :garbage_collect
-
-      def set_flag(query, *flags)
-        if flags.count = 1
-          redis(query).setex query.results_key(flags.first), 1, query.ttl
-        else
-          redis(query).multi do |r|
-            flags.each {|flag| redis(query).setex query.results_key(flag), 1, query.ttl }
-          end
-        end
-      end
-      alias :set_flags :set_flag
-      def refresh_flag(query, flag)
-        redis(query).expire query.results_key(flag), query.ttl
-      end
-      def clear_flag(query, *flags)
-        redis(query).multi do |r|
-          flags.each {|flag| redis(query).del(query.results_key flag)}
-        end
-      end
-      alias :clear_flags :clear_flag
-      def get_flag(query, flag)
-        redis(query).exists query.results_key(flag)
-      end
-
+      
       def query(model, arg={})
         Metaquery.new(self, arg.merge(:target_model => model, :realtime => true))
       end
       def metaquery(arg={})
-        query(self, arg).static!
+        query self, arg
       end
 
       def find(marshaled)
@@ -130,7 +79,7 @@ module Queris
         Queris::redis :metaquery
       end
       def redis
-        @redis || model.redis(@target_model) || redis_master
+        @redis || model.redis(@target_model) || Queris::redis(:'metaquery:slave') || redis_master
       end
       def static!; @live=false; @realtime=false; self; end
       def realtime?; @realtime; end
@@ -138,6 +87,20 @@ module Queris
         live!
         @realtime=true
         self
+      end
+      def results_with_gc
+        res = results(:replace_command => true) do |cmd, key, first, last, rangeopt|
+          redis.evalsha(Queris.script_hash(:results_with_ttl), [key], ["Queris:Metaquery:expire:%s"])
+        end
+        res = [[],[]] if res.empty?
+        res.first.map! do |marshaled|
+          QueryStore.find marshaled
+        end
+        #garbage-collect the expired stuff
+        res.last.each do |marshaled|
+          QueryStore.remove QueryStore.find(marshaled)
+        end
+        res.first
       end
       def results_exist?
         super(redis)

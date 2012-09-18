@@ -277,12 +277,13 @@ module Queris
 
     
     #Level Cleared. Time extended!
-    def extend_ttl(r=nil)
+    def extend_ttl(r=nil, opt={})
       return (redis_master || redis).multi{ |multir| extend_ttl multir } if r.nil?
       r.expire results_key, ttl
       r.setex results_key(:exists), ttl, ""
       if live?
         r.expire results_key(:marshaled), ttl
+        QueryStore.update self
       end
       self
     end
@@ -437,8 +438,16 @@ module Queris
       indices :subqueries => true
     end
     def all_live_indices
-      return [] if !@live
-      @live_indices || all_indices
+      return [] unless live?
+      ret = all_indices
+      ret.select! do |i|
+        if ForeignIndex === i
+          i.real_index.model.live_index? i
+        else
+          i.model.live_index? i
+        end
+      end
+      ret
     end
 
     # recursively and conditionally flush query and subqueries

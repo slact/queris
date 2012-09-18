@@ -57,6 +57,13 @@ module Queris
         end
         #BUG: redis_indices is very static. superclass modifications after class declaration will not count.
       end
+      def live_index?(index)
+        @live_redis_indices.member? redis_index(index)
+      end
+      def foreign_index?(index)
+        @foreign_redis_indices.member? redis_index(index)
+      end
+        
       def query_profiler; @profiler || DummyProfiler; end
       def profile_queries?; query_profiler.nil?; end
 
