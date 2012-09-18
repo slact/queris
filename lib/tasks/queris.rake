@@ -2,6 +2,27 @@ namespace :queris do
   def confirm
     $stdin.getch.upcase=='Y'
   end
+  def warn(action, warning, times=1)
+    puts warning if warning
+    if action then
+      q = "Do you really want to #{action}?"
+    else
+      if times == 1
+        q = "Did you back up everything you needed to back up?"
+      else
+        q = "Are you sure you want to proceed?"
+      end
+    end
+    puts "#{q} [y/n]"
+    if confirm
+      if times <= 1
+        return true
+      else
+        return warn(nil, nil, times-1)
+      end
+    end
+  end
+  
   def load_models
     # Load all the application's models. Courtesy of random patch for Sunspot ()
     Rails.root.join('app', 'models').tap do |models_path|
@@ -13,12 +34,7 @@ namespace :queris do
   desc "Rebuild all queris indices, optionally deleting nearly everything beforehand"
   task :rebuild, [:clear] => :environment do |t, args|
     args.with_defaults(:clear => false)
-    warning = "Are you sure you want to rebuild all redis indices?"
-    warning += " All current redis indices and queries will be destroyed!" if args.clear
-    puts warning + " [y/n]"
-    abort unless confirm
-    puts "Did you back up everything you needed to back up? [y/n]"
-    abort unless confirm
+    abort unless warn "rebuild all redis indices", "All current redis indices and queries will be destroyed!", 2
     load_models
     Queris.rebuild!(args.clear)
   end
@@ -42,9 +58,21 @@ namespace :queris do
 
   desc "Clear all object caches"
   task :clear_cache => :environment do
-    puts "weee"
     load_models
-    puts "loaded models"
     puts "Deleted #{Queris.clear_cache!} cache keys."
+  end
+  
+  desc "Clear all queries"
+  task :clear_queries => :environment do
+    load_models
+    abort unless warn "clear all queries", "All queries, live and otherwise, and all metaqueries will be deleted"
+    puts "Deleted #{Queris.clear_queries!} query keys."
+  end
+  
+  desc "Clear all caches and queries"
+  task :clear => :environment do
+    load_models
+    abort unless warn "clear all queries and caches", "All caches and queries will be deleted", 2
+    puts "Deleted #{Queris.clear!} keys."
   end
 end
