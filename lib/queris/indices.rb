@@ -124,12 +124,12 @@ module Queris
       redis(obj).del hash_key obj
     end
     
-    def fetch(id)
+    def fetch(id, opt={})
       if @attribute.nil?
-        hash = Queris.redis(:slave, :master).hgetall hash_key id
+        hash = (opt[:redis] || Queris.redis(:slave, :master)).hgetall hash_key id
         load_cached hash
       else
-        return Queris.redis(:slave, :master).hget hash_key(id), @attribute
+        return (opt[:redis] || Queris.redis(:slave, :master)).hget hash_key(id), @attribute
       end
     end
     

@@ -273,9 +273,15 @@ module Queris
     
     %w(create update delete).each do |op|
       define_method "#{op}_redis_indices" do |indices=nil, redis=nil|
+        last = []
         (indices || self.class.redis_indices).each do |index|
-          index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+          unless index.update_last?
+            index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+          else
+            last << index
+          end
         end
+        last.each {|index| index.send op, self}
       end
     end
     
