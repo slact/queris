@@ -26,6 +26,9 @@ module Queris
         raise "No appropriate redis connection found for QueryStore. Add a queris connection with the metaquery role (Queris.add_redis(r, :metaquery), or add live_queries to desired models." unless r
         r
       end
+      def redis_master
+        Queris.redis :metaquery, :master
+      end
       
       def index_to_val(index)
         Index === index ? "#{index.model.name}:#{index.class.name.split('::').last}:#{index.name}" : index
@@ -67,7 +70,23 @@ module Queris
       def find(marshaled)
         Marshal.load(marshaled)
       end
-
+      
+      #wipe all metaquery info
+      def clear!
+        querykeys = redis_master.keys query(self).results_key(nil, "*")
+        expirekeys = redis_master.keys "Queris:Metaquery:expire:*"
+        indexkeys = redis_master.keys redis_index(:index).key("*", nil, true)
+        total = querykeys.count + expirekeys.count + indexkeys.count
+        print "Clearing everything (#{total} keys) from QueryStore..."
+        [querykeys, expirekeys, indexkeys].each do |keys|
+          redis_master.multi do |r|
+            keys.each { |k| r.del k }
+          end
+        end
+        puts "ok"
+        total
+      end
+      alias :clear_queries! :clear!
     end
     class Metaquery < QuerisModelQuery
       def initialize(model, arg={})

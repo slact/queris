@@ -574,12 +574,18 @@ module Queris
       return result 0
     end
     
-    def results_key(suffix = nil)
-      if @results_key.nil?
+    def results_key(suffix = nil, raw_id = nil)
+      if @results_key.nil? or raw_id
         if (reused_set_key = uses_index_as_results_key?)
           @results_key = reused_set_key
         else
-          @results_key ||= "#{@redis_prefix}results:" << digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}"
+          theid = raw_id || (digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}")
+          thekey = "#{@redis_prefix}results:#{theid}"
+          if raw_id
+            return thekey
+          else
+            @results_key = thekey
+          end
         end
       end
       if suffix

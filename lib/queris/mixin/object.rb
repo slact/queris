@@ -77,6 +77,31 @@ module Queris
       def query(arg={}, &block)
         redis_query arg, &block
       end
+      def clear_queries!
+        q = query
+        querykeys = redis.keys q.results_key(nil, "*")
+        print "Deleting #{querykeys.count} query keys for #{name}..."
+        redis.multi do |r|
+          querykeys.each {|k| r.del k}
+        end
+        puts "ok"
+        querykeys.count
+      end
+      def clear_cache!
+        indices = redis_indices(:class => HashCache)
+        total = 0
+        indices.each do |i|
+          keymatch = i.key("*", nil, true)
+          allkeys = redis.keys(keymatch)
+          print "Clearing #{allkeys.count} cache keys for #{name} ..."
+          redis.multi do |r|
+            allkeys.each { |key| r.del key }
+          end
+          total += allkeys.count
+          puts "ok"
+        end
+        total
+      end
       def redis_query(arg={})
         Queris::Query.new self, arg
       end

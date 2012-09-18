@@ -120,25 +120,21 @@ module Queris
     end
     
     def clear_cache!
-      cache_indices = []
       cleared = 0
-      @models.each do |model| 
-        indices = model.redis_indices(:class => HashCache)
-        indices.each do |i|
-          keymatch = i.key("*", nil, true)
-          allkeys = redis.keys(keymatch)
-          print "Clearing #{allkeys.count} cache keys for #{model.name} ..."
-          redis.multi do |r|
-            allkeys.each { |key| redis.del key }
-          end
-          print "ok. \r\n"
-          cleared += allkeys.count
-        end
-      end
-      return cleared
+      @models.each { |model| cleared += model.clear_cache! }
+      cleared
     end
+
     def clear_queries!
-      raise "not implemented yet"
+      cleared = 0
+      @models.each do |model|
+        cleared += model.clear_queries!
+      end
+      cleared
+    end
+    
+    def clear!
+      clear_cache! + clear_queries!
     end
     
     #rebuild all known queris indices
