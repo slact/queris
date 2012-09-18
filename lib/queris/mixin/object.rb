@@ -34,6 +34,7 @@ module Queris
       # :foreign => true - look in foreign indices (other models' indices indexing from this model)
       # : live => true - look in live indices
       # ONLY ONE of the following will be respected
+      # :except => [index_name, ...] - exclude these
       # :attributes => [...] - indices matching any of the given attribute names
       # :names => [...] - indices with any of the given names
       # :class => Queris::IndexClass - indices that are descendants of given class
@@ -43,6 +44,9 @@ module Queris
         if !opt[:attributes].nil?
           attrs = opt[:attributes].map{|v| v.to_sym}.to_set
           indices.select { |index| attrs.member? index.attribute }
+        elsif opt[:except]
+          except = Array === opt[:except] ? opt[:except] : [ opt[:except] ]
+          indices.select { |index| !except.member? index.name }
         elsif !opt[:names].nil?
           names = opt[:names].map{|v| v.to_sym}.to_set
           indices.select { |index| names.member? index.name }
@@ -53,6 +57,13 @@ module Queris
         end
         #BUG: redis_indices is very static. superclass modifications after class declaration will not count.
       end
+      def live_index?(index)
+        @live_redis_indices.member? redis_index(index)
+      end
+      def foreign_index?(index)
+        @foreign_redis_indices.member? redis_index(index)
+      end
+        
       def query_profiler; @profiler || DummyProfiler; end
       def profile_queries?; query_profiler.nil?; end
 
@@ -182,7 +193,7 @@ module Queris
               live_redis_indices << i
             end
           else
-            @live_redis_indices << i
+            live_redis_indices << i
           end
         end
       end
@@ -262,9 +273,15 @@ module Queris
     
     %w(create update delete).each do |op|
       define_method "#{op}_redis_indices" do |indices=nil, redis=nil|
+        last = []
         (indices || self.class.redis_indices).each do |index|
-          index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+          unless index.update_last?
+            index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+          else
+            last << index
+          end
         end
+        last.each {|index| index.send op, self}
       end
     end
     

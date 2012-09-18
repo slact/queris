@@ -26,7 +26,11 @@ module Queris
         @incremental_attr[attr_name.to_sym]
       end
       def find(id, opt={})
-        new(id, opt).load
+        if opt[:redis]
+          new(id).load(nil, redis: opt[:redis])
+        else
+          new(id).load
+        end
       end
       
       private
@@ -58,8 +62,12 @@ module Queris
     end
 
     def results(*arg)
-      res_ids = super(*arg) do |id|
-        @model.find id
+      if block_given?
+        super(*arg, &Proc.new)
+      else
+        super(*arg) do |id|
+          @model.find id
+        end
       end
     end
 

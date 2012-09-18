@@ -27,12 +27,11 @@ module Queris
       def stored_in_redis?
         redis_index(:all_attribute_hashcache, Queris::HashCache)
       end
-      def find_cached(id, cache_it=true)
-        #POTENTIAL OPTIMIZATION: accept Enumerable id, pipeline redis commands
+      def find_cached(id, opt={})
         cache = redis_index :all_attribute_hashcache, Queris::HashCache
-        if (obj = cache.fetch(id))
+        if (obj = cache.fetch(id, opt[:redis]))
           return obj
-        elsif cache_it
+        elsif !opt[:nofallback]
           begin
             obj = find(id)
           rescue

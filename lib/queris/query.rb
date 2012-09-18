@@ -44,7 +44,7 @@ module Queris
     end
 
     def redis_master
-      Queris.redis :master || @redis || @model.redis
+      Queris.redis :master || @redis || model.redis
     end
     private :redis_master
     
@@ -114,6 +114,7 @@ module Queris
 
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
+      raise "Recursive subquerying doesn't do anything useful." if index == self
       set_param_from_index index, val
 
       #set range and enumerable hack
@@ -235,22 +236,17 @@ module Queris
     #static queries are updated only after they expire
     def static?; !live!; end
     def static! 
-      Queris::QueryStore.clear_flag(self, 'realtime') if realtime?
       @live=false; @realtime=false; self; 
     end
     #live queries have pending updates stored nearby
     def live!; @live=true; @realtime=false; self; end
     #realtime queries are updated automatically, on the spot
     def realtime!
-      if realtime? 
-        Queris::QueryStore.refresh_flag(self, 'realtime')
-      else
-        Queris::QueryStore.set_flag(self, 'realtime')
-        live!
-      end
+      live!
+      @realtime = true
     end
     def realtime?
-      @realtime ||= live? && Queris::QueryStore.get_flag(self, 'realtime')
+      live? && @realtime
     end
 
     #update query results with object(s)
@@ -259,28 +255,11 @@ module Queris
         #puts "No need to update #{self}"
         return self 
       end
-      (redis_master || redis).multi do |r|
-        if realtime? #update query in-place
-          if arg[:delete] || !member?(obj)
-            r.zrem results_key, obj.id #BUG-IN-WAITING: HARDCODED id attribute
-          else
-            r.zadd results_key, sort_score(obj) || 0, obj.id #BUG-IN-WAITING: HARDCODED id attribute
-          end
-          realtime!
-          extend_ttl r #query is current now
-        else
-          if arg[:delete] || !member?(obj)
-            delta_key = results_key('delta:diff')
-            r.zadd delta_key, '-inf', obj.id #BUG-IN-WAITING: HARDCODED id attribute
-          else
-            # we used to need a differential score for a later ZUNIONSTORE (with an ADD score aggregate function)
-            # but now we use a lua script to merge stuff, so we don't care anymore.
-            # score = sort_score(obj) - sort_score(obj, previous: true)
-            delta_key = results_key('delta:union')
-            r.zadd delta_key, sort_score(obj), obj.id #BUG-IN-WAITING: HARDCODED id attribute
-          end
-          r.evalsha Queris.script_hash(:copy_ttl), [results_key, delta_key]
-        end
+      obj_id = model === obj ? obj.id : obj  #BUG-IN-WAITING: HARDCODED id attribute
+      if arg[:delete]
+        (redis_master || redis).zrem results_key, obj_id
+      else
+        (redis_master || redis).evalsha Queris.script_hash(:update_query), [results_key(:marshaled)], [obj_id]
       end
       #puts "updated #{self}"
       self
@@ -299,10 +278,14 @@ module Queris
 
     
     #Level Cleared. Time extended!
-    def extend_ttl(r=nil)
+    def extend_ttl(r=nil, opt={})
       return (redis_master || redis).multi{ |multir| extend_ttl multir } if r.nil?
       r.expire results_key, ttl
       r.setex results_key(:exists), ttl, ""
+      if live?
+        r.expire results_key(:marshaled), ttl
+        QueryStore.update self
+      end
       self
     end
     
@@ -327,7 +310,9 @@ module Queris
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
         run_static_query force, opt[:debug], opt[:forced_results_redis]
-        Queris::QueryStore.add(self) if live? && !uses_index_as_results_key?
+        if live? && !uses_index_as_results_key?
+          Queris::QueryStore.add(self)
+        end
       elsif live?
         run_live_query opt[:no_update]
       else
@@ -359,6 +344,7 @@ module Queris
 
       #all live operations happen on master
       (redis_master || redis).evalsha Queris.script_hash(:apply_query_delta), [results_key, union_key, diff_key]
+      extend_ttl
     end
     private :run_live_query
 
@@ -400,6 +386,7 @@ module Queris
         #puts "QUERY TTL: ttl"
         if results_redis == master
           extend_ttl(pipelined_redis)
+          pipelined_redis.setex(results_key(:marshaled), ttl, JSON.dump(json_redis_dump)) if live?
         end
       #end
       @profile.finish :own_time
@@ -410,6 +397,7 @@ module Queris
           m.setnx results_key, 1
           #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
           extend_ttl m
+          m.setex(results_key(:marshaled), ttl, JSON.dump(json_redis_dump)) if live?
         end
       end
       set_time_cached Time.now if track_stats?
@@ -451,8 +439,16 @@ module Queris
       indices :subqueries => true
     end
     def all_live_indices
-      return [] if !@live
-      @live_indices || all_indices
+      return [] unless live?
+      ret = all_indices
+      ret.select! do |i|
+        if ForeignIndex === i
+          i.real_index.model.live_index? i
+        else
+          i.model.live_index? i
+        end
+      end
+      ret
     end
 
     # recursively and conditionally flush query and subqueries
@@ -475,9 +471,10 @@ module Queris
         res = (redis_master || redis).multi do |r|
           r.del results_key
           r.del results_key(:exists)
+          r.del results_key(:marshaled) if live?
         end
         Queris::QueryStore.remove(self) if live? && !uses_index_as_results_key?
-        flushed += res.first
+        flushed += res.first if res
       end
       flushed
     end
@@ -502,7 +499,11 @@ module Queris
       key = results_key
       case redis.type(key)
       when 'set'
-        res = redis.smembers key
+        if block_given? && opt[:replace_command]
+          res = yield :smembers, key, nil, nil, {}
+        else
+          res = redis.smembers key
+        end
         raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." unless arg.empty?
       when 'zset'
         rangeopt = {}
@@ -688,11 +689,11 @@ module Queris
       subs = {}
       @subqueries.each { |sub| subs[sub.id.to_sym]=sub.marshal_dump }
       unique_params = params.dup
-      each_operand do |index, val|
-        unless Query === index
+      each_operand do |op|
+        unless Query === op.index
           #binding.pry
-          param_name = index.name
-          unique_params.delete param_name if params[param_name] == val
+          param_name = op.index.name
+          unique_params.delete param_name if params[param_name] == op.value
         end
       end
       {
@@ -707,11 +708,32 @@ module Queris
           ttl: ttl,
           expire_after: @expire_after,
           track_stats: @track_stats,
-          live: @live && !@live_indices.nil? ? @live_indices.map{|i| i.name} : @live
+          live: @live,
+          realtime: @realtime
         }
       }
     end
-    
+
+    def json_redis_dump
+      queryops = []
+      ops.each {|op| queryops.concat(op.json_redis_dump)}
+      queryops.reverse!
+      sortops = []
+      sort_ops.each{|op| sortops.concat(op.json_redis_dump)}
+      ret = {
+        key: results_key,
+        live: live?,
+        realtime: realtime?,
+        ops_reverse: queryops,
+        sort_ops: sortops
+      }
+      if live? && !realtime?
+        ret[:union_delta_key] = results_key :'delta:union'
+        ret[:diff_delta_key] = results_key :'delta:diff'
+      end
+      ret
+    end
+
     def marshal_load(data)
       if Hash === data
         initialize Queris.model(data[:model]), data[:args]
@@ -743,28 +765,20 @@ module Queris
         arg.each { |n,v| instance_variable_set "@#{n}", v }
       end
     end
-
-    def member? (obj)
-      ops.reverse_each do |op|
-        unless (member = op.member?(obj)).nil?
-          return member
-        end
-      end
-      false
-    end
     def marshaled
       Marshal.dump self
     end
 
-    def each_operand #walk though all query operands
-      ops.each do |operation|
+    def each_operand(which_ops=nil) #walk though all query operands
+      (which_ops == :sort ? sort_ops : ops).each do |operation|
         operation.operands.each do |operand|
-          yield operand.index, operand.value, operation
+          yield operand, operation
         end
       end
     end
+
     private
-    
+
     class Op #query operation
       class Operand #boilerplate
         attr_accessor :index, :value
@@ -774,6 +788,31 @@ module Queris
         end
         def marshal_dump
           [(Query === index ? index.id : index.name).to_sym, value]
+        end
+        
+        def json_redis_dump(op_name = nil)
+          ret = []
+          miniop = {}
+          if Query === @index 
+            miniop = {query: index.json_redis_dump}
+          elsif Range === @value && @index.handle_range?
+            miniop[:min] = @value.begin
+            miniop[@value.exclude_end? ? :max : :max_or_equal] = @value.end
+            miniop[:key] = @index.key
+          elsif Enumerable === value
+            value.each do |val|
+              miniop = { equal: val, key: @index.key(val) }
+              miniop[:op] = op_name if op_name
+              ret << miniop
+            end
+            return ret
+          else
+            miniop[:equal] = @value
+          end
+          miniop[:key] = @index.key(@value)
+          miniop[:op]=op_name if op_name
+          ret << miniop
+          ret
         end
       end
 
@@ -837,52 +876,31 @@ module Queris
       def marshal_dump
         [self.class::SYMBOL, operands.map {|op| op.marshal_dump}]
       end
+      def json_redis_dump(etc={})
+        all_ops = []
+        operands.map do |op|
+          all_ops.concat op.json_redis_dump(self.class::NAME)
+        end
+        all_ops
+      end
       def to_s
         "#{symbol} #{operands.map{|o| Query === o.index ? o.index : "#{o.index.name}<#{o.value}>"}.join(" #{symbol} ")}"
-      end
-      
-      private
-      def member?(obj)
-        operands.reverse_each do |op|
-          index, val = op.index, op.value
-          if Query === index 
-            member = index.member? obj
-          elsif ForeignIndex === index
-            next
-          else
-            obj_val = obj.send index.attribute
-            member = case val
-            when Range
-              val.cover? member unless member.nil?
-            when Enumerable
-              val.member? member unless member.nil?
-            else
-              val == obj_val
-            end
-          end
-          member = yield member if block_given?
-          return member unless member.nil?
-        end
-        nil
       end
     end
     class UnionOp < Op
       COMMAND = :zunionstore
       SYMBOL = :'∪'
-      def member? obj
-        super(obj) { |m| m ? m : nil }
-      end
+      NAME = :union
     end
     class IntersectOp < Op
       COMMAND = :zinterstore
       SYMBOL = :'∩'
-      def member? obj
-        super(obj) { |m| m ? nil : m }
-      end
+      NAME = :intersect
     end
     class DiffOp < Op
       COMMAND = :zunionstore
       SYMBOL = :'∖'
+      NAME = :diff
       def target_key_weight; 0; end
       def operand_key_weight(op=nil); :'-inf'; end
       def run(redis, result_key, first=nil)
@@ -890,13 +908,15 @@ module Queris
         redis.zremrangebyscore result_key, :'-inf', :'-inf'
         # BUG: sorted sets with -inf scores will be treated incorrectly when diffing
       end
-      def member? obj
-        super(obj) { |m| m ? !m : nil }
-      end
     end
     class SortOp < Op
       COMMAND = :zinterstore
       SYMBOL = :sortby
+      def json_redis_dump
+        operands.map do |op|
+          {key: op.index.key, multiplier: op.value}
+        end
+      end
       def push(index, reverse=nil)
         super(index, reverse ? -1 : 1)
       end
@@ -916,6 +936,7 @@ module Queris
         res
       end
     end
+    
     def used_indices; @used_index; end
     def set_param_from_index(index, val)
       index = use_index index
