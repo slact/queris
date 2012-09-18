@@ -46,7 +46,7 @@ module Queris
       end
       def update(query)
         redis.pipelined do
-          redis.setex, "Queris:Metaquery:expire:#{query.marshaled}", query.ttl
+          redis.setex "Queris:Metaquery:expire:#{query.marshaled}", query.ttl, ""
         end
       end
 
