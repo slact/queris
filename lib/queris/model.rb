@@ -34,7 +34,7 @@ module Queris
       raise ArgumentError, "Attribute #{attr_name} already exists in Queris model #{self.name}." if @attributes.member? attr_name
       
       define_method "#{attr_name}" do |noload=false|
-        if (val = @attributes[attr_name]).nil? && !@loaded && !noload
+        if (val = @attributes[attr_name]).nil? && !@loaded && !noload && !@noload
           load
           send attr_name, true
         else
@@ -108,7 +108,7 @@ module Queris
 
     def save
       key = hash_key #before multi
-      
+      @noload = true
       # to ensure atomicity, we unfortunately need two round trips to redis
       begin
         if @attributes_to_save.length > 0
@@ -140,6 +140,7 @@ module Queris
       end while bulk_response.nil?
       @attributes_to_save.clear
       @attributes_to_incr.clear
+      @noload = false
       self
     end
 
