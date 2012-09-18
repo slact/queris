@@ -44,7 +44,7 @@ module Queris
     end
 
     def redis_master
-      Queris.redis :master || @redis || @model.redis
+      Queris.redis :master || @redis || model.redis
     end
     private :redis_master
     
@@ -114,6 +114,7 @@ module Queris
 
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
+      raise "Recursive subquerying doesn't do anything useful." if index == self
       set_param_from_index index, val
 
       #set range and enumerable hack
@@ -473,7 +474,7 @@ module Queris
           r.del results_key(:marshaled) if live?
         end
         Queris::QueryStore.remove(self) if live? && !uses_index_as_results_key?
-        flushed += res.first
+        flushed += res.first if res
       end
       flushed
     end
