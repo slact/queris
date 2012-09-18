@@ -197,6 +197,9 @@ module Queris
       
     end
 
+    def redis=(r)
+      @redis=r
+    end
     def redis(no_fallback=false)
       if no_fallback
         @redis || self.class.redis

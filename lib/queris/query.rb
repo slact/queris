@@ -235,22 +235,17 @@ module Queris
     #static queries are updated only after they expire
     def static?; !live!; end
     def static! 
-      Queris::QueryStore.clear_flag(self, 'realtime') if realtime?
       @live=false; @realtime=false; self; 
     end
     #live queries have pending updates stored nearby
     def live!; @live=true; @realtime=false; self; end
     #realtime queries are updated automatically, on the spot
     def realtime!
-      if realtime? 
-        Queris::QueryStore.refresh_flag(self, 'realtime')
-      else
-        Queris::QueryStore.set_flag(self, 'realtime')
-        live!
-      end
+      live!
+      @realtime = true
     end
     def realtime?
-      @realtime ||= live? && Queris::QueryStore.get_flag(self, 'realtime')
+      live? && @realtime
     end
 
     #update query results with object(s)
@@ -327,7 +322,9 @@ module Queris
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
         run_static_query force, opt[:debug], opt[:forced_results_redis]
-        Queris::QueryStore.add(self) if live? && !uses_index_as_results_key?
+        if live? && !uses_index_as_results_key?
+          Queris::QueryStore.add(self)
+        end
       elsif live?
         run_live_query opt[:no_update]
       else
