@@ -29,7 +29,7 @@ module Queris
       end
       def find_cached(id, opt={})
         cache = redis_index :all_attribute_hashcache, Queris::HashCache
-        if (obj = cache.fetch(id, opt[:redis]))
+        if (obj = cache.fetch(id, opt))
           return obj
         elsif !opt[:nofallback]
           begin
