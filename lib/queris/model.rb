@@ -167,9 +167,9 @@ module Queris
       self
     end
 
-    def load(hash=nil)
+    def load(hash=nil, opt={})
       raise "Can't load #{self.class.name} with id #{id} -- model was specified index_only, so it was never saved." if index_only
-      (hash || redis.hgetall(hash_key)).each do |attr_name, val|
+      (hash || (opt[:redis] || redis).hgetall(hash_key)).each do |attr_name, val|
         attr = attr_name.to_sym
         if (old_val = @attributes[attr]) != val
           @attributes_were[attr] = old_val unless old_val.nil?
