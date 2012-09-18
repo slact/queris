@@ -186,7 +186,7 @@ module Queris
               live_redis_indices << i
             end
           else
-            @live_redis_indices << i
+            live_redis_indices << i
           end
         end
       end
