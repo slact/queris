@@ -190,9 +190,22 @@ module Queris
     end
     
     def sorting_by? index
-      if (index=@model.redis_index(index))
+      val = 1
+      if index.respond_to?("[]") && !(Index === index) then
+        if index[0]=='-' then
+          index, val = index[1..-1], -1
+        end
+      end
+      begin
+        index=@model.redis_index(index)
+      rescue
+        index = nil
+      end
+      if index
         sort_ops.each do |op|
-          op.operands.each { |o| return true if o.index == index }
+          op.operands.each do |o|
+            return true if o.index == index && o.value == val
+          end
         end
       end
       nil
