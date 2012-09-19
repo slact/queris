@@ -25,11 +25,13 @@ local is_member = function(op, id)
     local m = score and true
     if op.min then m = m and score > op.min end
     if op.max then m = m and score < op.max end
-    if op.max_or_equal then m = m and score <= op.max_of_equal end
+    if op.max_or_equal then m = m and score <= op.max_or_equal end
     if op.equal then m = m and score == op.equal end
     return m
+  elseif t == 'none' then
+    return false
   else
-    redis.log(redis.LOG_WARNING, "Unexpected index type" .. (t or "?"))
+    redis.log(redis.LOG_WARNING, "Unexpected index type " .. (t or "?"))
     return false
   end
 end

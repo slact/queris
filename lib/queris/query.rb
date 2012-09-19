@@ -815,18 +815,18 @@ module Queris
           if Query === @index 
             miniop = {query: index.json_redis_dump}
           elsif Range === @value && @index.handle_range?
-            miniop[:min] = @value.begin
-            miniop[@value.exclude_end? ? :max : :max_or_equal] = @value.end
+            miniop[:min] = @index.val(@value.begin)
+            miniop[@value.exclude_end? ? :max : :max_or_equal] = @index.val(@value.end)
             miniop[:key] = @index.key
           elsif Enumerable === value
             value.each do |val|
-              miniop = { equal: val, key: @index.key(val) }
+              miniop = { equal: @index.val(val), key: @index.key(val) }
               miniop[:op] = op_name if op_name
               ret << miniop
             end
             return ret
           else
-            miniop[:equal] = @value
+            miniop[:equal] = @index.val(@value)
           end
           miniop[:key] = @index.key(@value)
           miniop[:op]=op_name if op_name
