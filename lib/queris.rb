@@ -137,6 +137,14 @@ module Queris
       clear_cache! + clear_queries!
     end
     
+    #reconnect all redic clients
+    def reconnect
+      all_redises.each { |r| r.client.reconnect }
+    end
+    def disconnect
+      all_redises.each { |r| r.client.disconnect }
+    end
+    
     #rebuild all known queris indices
     def rebuild!(clear=false)
       start = Time.now
