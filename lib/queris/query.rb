@@ -386,8 +386,8 @@ module Queris
       @profile.start :own_time
       debug_info = []
       temp_results_key = results_key "querying:#{SecureRandom.hex}"
-      #results_redis.pipelined do |pipelined_redis|
-      pipelined_redis = results_redis
+      results_redis.pipelined do |pipelined_redis|
+      #pipelined_redis = results_redis
         first_op = ops.first
         [ops, sort_ops].each do |ops|
           ops.each do |op|
@@ -401,7 +401,7 @@ module Queris
           extend_ttl(pipelined_redis)
           pipelined_redis.setex(results_key(:marshaled), ttl, JSON.dump(json_redis_dump)) if live?
         end
-      #end
+      end
       @profile.finish :own_time
       unless master.nil? || master == results_redis
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
