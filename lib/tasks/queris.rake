@@ -1,6 +1,10 @@
 namespace :queris do
   def confirm
-    $stdin.getch.upcase=='Y'
+    if $stdin.respond_to? 'getch'
+      $stdin.getch.upcase == "Y"
+    else #ruby <= 1.9.2 doesn't have getch
+      $stdin.readline[0].upcase == "Y"
+    end
   end
   def warn(action, warning, times=1)
     puts warning if warning
