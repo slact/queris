@@ -158,11 +158,11 @@ module Queris
 
       def add_redis_index(index, opt={})
         raise "Not an index" unless index.kind_of? Index
-        if (found = redis_index_hash[index.name])
+        #if (found = redis_index_hash[index.name])
           #todo: same-name indices are allowed, but with some caveats.
           #define and check them here.
           #raise "Index #{index.name} (#{found.class.name}) already exists. Trying to add #{index.class.name}"
-        end
+        #end
         @redis_indices ||= []
         redis_indices.push index
         redis_index_hash[index.name.to_sym]=index
