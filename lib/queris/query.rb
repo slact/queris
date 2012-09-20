@@ -378,7 +378,7 @@ module Queris
         @subqueries.each { |q| subq_exist[q] = q.results_exist? r }
       end
       subq_exist.each do |q, exist|
-        next if exist.value
+        next if (Redis::Future === exist ? exist.value : exist)
         q.query :force => force, :debug => debug, :forced_results_redis => results_redis
       end
       
