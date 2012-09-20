@@ -32,15 +32,24 @@ module Queris
       #get all redis indices
       #options:
       # :foreign => true - look in foreign indices (other models' indices indexing from this model)
-      # : live => true - look in live indices
+      # :live => true - look in live indices
       # ONLY ONE of the following will be respected
       # :except => [index_name, ...] - exclude these
       # :attributes => [...] - indices matching any of the given attribute names
       # :names => [...] - indices with any of the given names
       # :class => Queris::IndexClass - indices that are descendants of given class
       def redis_indices(opt={})
-        indices = opt[:foreign] ? @foreign_redis_indices : (opt[:live] ? @live_redis_indices : @redis_indices)
-        indices ||= superclass.respond_to?(:redis_indices) ? self.superclass.redis_indices.clone : []
+        unless Hash === opt
+          tmp, opt = opt, {}
+          opt[tmp]=true
+        end
+        if opt[:foreign]
+          indices = @foreign_redis_indices || []
+        elsif opt[:live]
+          indices = @live_redis_indices || []
+        else
+          indices = @redis_indices || (superclass.respond_to?(:redis_indices) ? superclass.redis_indices.clone : [])
+        end
         if !opt[:attributes].nil?
           attrs = opt[:attributes].map{|v| v.to_sym}.to_set
           indices.select { |index| attrs.member? index.attribute }
@@ -58,10 +67,10 @@ module Queris
         #BUG: redis_indices is very static. superclass modifications after class declaration will not count.
       end
       def live_index?(index)
-        @live_redis_indices.member? redis_index(index)
+        redis_indices(:live).member? redis_index(index)
       end
       def foreign_index?(index)
-        @foreign_redis_indices.member? redis_index(index)
+        redis_indices(:foreign).member? redis_index(index)
       end
         
       def query_profiler; @profiler || DummyProfiler; end
