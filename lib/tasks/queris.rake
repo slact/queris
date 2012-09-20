@@ -6,10 +6,10 @@ namespace :queris do
       $stdin.readline[0].upcase == "Y"
     end
   end
-  def warn(action, warning, times=1)
+  def warn(action, warning=nil, times=1)
     puts warning if warning
     if action then
-      q = "Do you really want to #{action}?"
+      q = "Do you #{times>1 ? 'really ' : ''}want to #{action}?"
     else
       if times == 1
         q = "Did you back up everything you needed to back up?"
@@ -55,6 +55,20 @@ namespace :queris do
       index = model.redis_index args.index
     rescue
       abort "No index named #{args.index} found in #{model.name}."
+    end
+    print "Checking if index #{index.name} already exists..." 
+    foundkeys = model.redis.keys index.key('*', nil, true)
+    if foundkeys.count > 0
+      puts "it does."
+      if warn "delete existing data on #{model.name} #{index.name} index"
+        print "Deleting #{foundkeys.count} keys for #{index.name}..."
+        model.redis.multi do  |r|
+          foundkeys.each {|k| r.del k}
+        end
+        puts " done."
+      else
+        abort unless warn "overwrite it then", "Will not delete existing data."
+      end
     end
     puts "Building index #{index.name} for #{model.name}"
     model.build_redis_index index.name
