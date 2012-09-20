@@ -234,6 +234,10 @@ module Queris
       end.join('+')
       sorting.empty? ? nil : sorting.to_sym
     end
+    def sort_mult #sort multiplier (direction) -- currently, +1 or -1
+      return 0 if sort_ops.empty?
+      sort_ops.first.operands.first.value
+    end
 
     def resort #apply a sort to set of existing results
       @resort=true
@@ -498,20 +502,22 @@ module Queris
     #results(x, y) same
     #results(x) first x results
     #results(x..y, :reverse) range in reverse
+    #results(x..y, :score =>a..b) results from x to y with scores in given score range
     #results(x..y, :with_scores) return scores with results as [ [score1, res1], [score2, res2] ... ]
     def results(*arg)
       run :no_update => true
       opt= Hash === arg.last ? arg.pop : {}
-      opt[:reverse]= true if arg.member?(:reverse)
+      opt[:reverse]=true if arg.member?(:reverse)
       opt[:with_scores]=true if arg.member?(:with_scores)
       opt[:range]=arg.shift if Range === arg.first
-      first, last = arg.shift, arg.shift if Numeric === arg[0] && arg[0].class == arg[1].class
+      opt[:range]=(arg.shift .. arg.shift) if Numeric === arg[0] && arg[0].class == arg[1].class
       opt[:range]=(0..arg.shift) if Numeric === arg[0]
       
       @profile.start :results_time
       key = results_key
       case redis.type(key)
       when 'set'
+        raise "Can't range by score on a regular results set" if opt[:score]
         if block_given? && opt[:replace_command]
           res = yield :smembers, key, nil, nil, {}
         else
@@ -521,17 +527,19 @@ module Queris
       when 'zset'
         rangeopt = {}
         rangeopt[:with_scores] = true if opt[:with_scores]
+        if (r = opt[:range])
+          first, last = r.begin, r.end - (r.exclude_end? ? 1 : 0)
+        end
         if (scrange = opt[:score])
+          rangeopt[:limit] = [ last - first, first ] if opt[:range]
+          raise "Can't fetch results with_scores when also limiting them by score. Pick one or the other." if opt[:with_scores]
           raise "query.results :score parameter must be a Range" unless Range === scrange
-          raise "Can't select result range numerically and by score (pick one, not both)" if opt[:range]
-          first = Queris::to_redis_float(scrange.begin)
-          last = Queris::to_redis_float(scrange.end)
+          first = Queris::to_redis_float(scrange.begin * sort_mult)
+          last = Queris::to_redis_float(scrange.end * sort_mult)
           last = "(#{last}" if scrange.exclude_end?
+          first, last = last, first if sort_mult == -1
           cmd = opt[:reverse] ? :zrevrangebyscore : :zrangebyscore
         else
-          if (range = opt[:range])
-            first, last = range.begin, range.end - (range.exclude_end? ? 1 : 0)
-          end
           cmd = opt[:reverse] ? :zrevrange : :zrange
         end
         if block_given? && opt[:replace_command]
@@ -545,9 +553,9 @@ module Queris
       if block_given? && !opt[:replace_command]
         if opt[:with_scores]
           ret = []
-          res.each do |r|
-            obj = yield r.first
-            ret << [obj, r.last] unless obj.nil?
+          res.each do |result|
+            obj = yield result.first
+            ret << [obj, result.last] unless obj.nil?
           end
           res = ret
         else
@@ -615,20 +623,30 @@ module Queris
       digest results_key
     end
     
-    def length
+    def count(opt={})
       run :no_update => true
       key = results_key
       case redis.type(key)
       when 'set'
+        raise "Query results are not a sorted set (maybe using a set index directly), can't range" if opt[:score]
         redis.scard key
       when 'zset'
-        redis.zcard key
+        if opt[:score]
+          range = opt[:score]
+          raise "'score' option must be a Range, but it's a #{range.class} instead" unless Range === range
+          first = range.begin * sort_mult
+          last = range.exclude_end? ? "(#{range.end.to_f * sort_mult}" : range.end.to_f * sort_mult
+          first, last = last, first if sort_mult == -1
+          redis.zcount(key, first, last)
+        else
+          redis.zcard key
+        end
       else #not a set. 
         0
       end
     end
-    alias :size :length
-    alias :count :length
+    alias :size :count
+    alias :length :count
 
     
     def subquery arg={}

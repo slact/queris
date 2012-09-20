@@ -3,6 +3,9 @@ local command, min, max, hashkeyf = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
 local ids
 if command == "smembers" then
   ids = redis.call(command, results_key)
+elseif command == "zrangebyscore" then
+  local lim, offset = ARGV[5], ARGV[6]
+  ids = redis.call(command, results_key, min, max, "LIMIT", offset, lim)
 else
   ids = redis.call(command, results_key, min, max)
 end

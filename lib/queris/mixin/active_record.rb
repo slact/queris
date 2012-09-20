@@ -66,7 +66,12 @@ module Queris
         ret = []
         super(*arg) do |cmd, key, first, last, rangeopt|
           raise "Results with_scores not yet implemented efficiently. Use raw_results if you must have scores." if rangeopt[:with_scores]
-          res, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, hashcache_index.key('%s',nil,true)])
+          if rangeopt[:limit]
+            limit, offset = *rangeopt[:limit]
+          else
+            limit, offset = nil, nil
+          end
+          res, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, hashcache_index.key('%s',nil,true), limit, offset])
           res.each_with_index do |h, i|
             if failed_i.first == i
               failed_i.shift
