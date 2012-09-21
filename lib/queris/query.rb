@@ -331,6 +331,7 @@ module Queris
         @profile.record :cache_miss, 1
         run_static_query force, opt[:debug], opt[:forced_results_redis]
         if live? && !uses_index_as_results_key?
+          redis_master.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump)
           Queris::QueryStore.add(self)
         end
       elsif live?
@@ -406,7 +407,6 @@ module Queris
         #puts "QUERY TTL: ttl"
         if results_redis == master
           extend_ttl(pipelined_redis)
-          pipelined_redis.setex(results_key(:marshaled), ttl, JSON.dump(json_redis_dump)) if live?
         end
       end
       @profile.finish :own_time
@@ -417,8 +417,6 @@ module Queris
           m.setnx results_key, 1
           #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
           extend_ttl m
-          m.setex(results_key(:marshaled), ttl, JSON.dump(json_redis_dump)) if live?
-          #puts "Stored script-serialized query #{q} at #{results_key(:marshaled)}"
         end
       end
       set_time_cached Time.now if track_stats?
