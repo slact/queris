@@ -143,13 +143,13 @@ module Queris
           end
           print "\rBuilding redis indices... ok. Committing to redis..."
         end
-        print "\rBuilt redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
+        print "\rBuilt #{name} redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
         #update all foreign indices
         foreign = 0
         indices.each do |index|
           if index.kind_of? Queris::ForeignIndex
             foreign+=1
-            index.real_index.model.send :build_redis_indices 
+            index.real_index.model.build_redis_index index.real_index
           end
         end if build_foreign
         puts "Built #{indices.count} ind#{indices.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
