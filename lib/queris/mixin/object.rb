@@ -127,6 +127,7 @@ module Queris
         indices ||= redis_indices
         print "\rDeleting existing indices..."
         indices.each do |index|
+          next if index.skip_create?
           index_keys.concat(redis.keys index.key "*", nil, true) #BUG - race condition may prevent all index values from being deleted
         end
         redis.multi do |redis|

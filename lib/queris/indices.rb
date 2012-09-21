@@ -30,7 +30,7 @@ module Queris
     end
     def update_last?; false; end
     def skip_create?
-      @skip_create
+      @skip_create || self.class.skip_create?
     end
     def skip_update?
       @skip_update
