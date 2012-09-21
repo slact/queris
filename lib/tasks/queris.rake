@@ -46,6 +46,8 @@ namespace :queris do
   desc "Build a redis index in the given model"
   task :'build', [:model, :index] => :environment do |t, args|
     load_models
+    abort "Please specify a model." if args.model.nil?
+    abort "Please specify an index." if args.index.nil?
     begin
       model = Object.const_get args.model
     rescue NameError
@@ -57,7 +59,7 @@ namespace :queris do
       abort "No index named #{args.index} found in #{model.name}."
     end
     print "Checking if index #{index.name} already exists..." 
-    foundkeys = model.redis.keys index.key('*', nil, true)
+    foundkeys = index.respond_to?('key') ? model.redis.keys(index.key('*', nil, true)) : []
     if foundkeys.count > 0
       puts "it does."
       if warn "delete existing data on #{model.name} #{index.name} index"
@@ -69,6 +71,8 @@ namespace :queris do
       else
         abort unless warn "overwrite it then", "Will not delete existing data."
       end
+    else
+      puts "it doesn't."
     end
     puts "Building index #{index.name} for #{model.name}"
     model.build_redis_index index.name
