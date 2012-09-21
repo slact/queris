@@ -227,7 +227,11 @@ module Queris
       queries.each do |i, qpack|
         update_obj, metaq = *qpack
         if Query === update_obj
-          metaq.update update_obj, arg
+          unless metaq.update update_obj, arg
+            #query may not yet be present on the server
+            metaq.run
+            metaq.update update_obj, arg
+          end
           next
         end
         metaq.results_with_gc.each do |query|
