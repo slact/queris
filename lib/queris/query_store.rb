@@ -95,10 +95,14 @@ module Queris
         super model, arg
       end
       def redis_master
-        Queris::redis :metaquery
+        Queris.redis(model == QueryStore ? :'metaquery:metaquery' : :metaquery)
       end
       def redis
-        @redis || model.redis(@target_model) || Queris::redis(:'metaquery:slave') || redis_master
+        if model == QueryStore
+          Queris.redis :'metaquery:metaquery'
+        else
+          @redis || Queris::redis(:'metaquery:slave') || redis_master
+        end
       end
       def static!; @live=false; @realtime=false; self; end
       def realtime?; @realtime; end
