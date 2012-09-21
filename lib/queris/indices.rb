@@ -45,6 +45,9 @@ module Queris
     def stateless?
       true
     end
+    def usable_as_results?(val=nil)
+      not (Enumerable === val)
+    end
     #can the index correctly be ranged over many values for q query?
     def handle_range?
       false
@@ -345,6 +348,9 @@ module Queris
     
     def incremental?; true; end
     def handle_range?; true; end
+    def usable_as_results?(val)
+       val.nil?
+    end
     def add(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
       #obj_id = obj.send(@key)

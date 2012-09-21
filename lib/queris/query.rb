@@ -286,13 +286,16 @@ module Queris
       if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
         first_op = ops.first.operands.first
         first_index = first_op.index
-        unless Enumerable === first_op.value || first_index.respond_to?(:before_query_op) || first_index.respond_to?(:after_query_op)
+        if first_index.usable_as_results? first_op.value
           return first_index.key first_op.value
         end
       end
       nil
     end
 
+    def usable_as_results?(*arg)
+      true
+    end
     
     #Level Cleared. Time extended!
     def extend_ttl(r=nil, opt={})
