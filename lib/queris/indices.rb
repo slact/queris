@@ -29,6 +29,7 @@ module Queris
       r
     end
     def update_last?; false; end
+    def self.skip_create?; false; end
     def skip_create?
       @skip_create || self.class.skip_create?
     end
