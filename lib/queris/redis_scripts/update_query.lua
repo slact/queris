@@ -2,14 +2,13 @@ local query_marshaled_key= KEYS[1]
 local id = ARGV[1]
 local marshaled = redis.call("get", query_marshaled_key)
 if not marshaled then
-  redis.log(redis.LOG_WARNING, "Queris couldn't update query with key " .. query_marshaled_key .. ": redis-friendly marshaled query contents not found.")
+  redis.log(redis.LOG_WARNING, "Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.")
   return false
 end
-
 redis.call("echo", marshaled)
 local success, query = pcall(cjson.decode, marshaled)
 if not success then
-  redis.log(redis.LOG_WARNING, "Error unpacking json-serialized query at " .. query_marshaled_key .. ": " ..   query .. "\r\n " .. marshaled)
+  redis.log(redis.LOG_WARNING, "Error unpacking json-serialized query at " .. query_marshaled_key .. " : " ..   query .. "\r\n " .. marshaled)
   return false
 end
 local query_member
@@ -70,13 +69,15 @@ local score = function(ops, id)
 end
 
 if query_member(query, id) then
-  redis.log(redis.LOG_WARNING, id .. " is a member of query at " .. query.key)
+  --redis.log(redis.LOG_WARNING, id .. " is a member of query at " .. query.key)
   redis.call('zadd', (query.realtime and query.key or query.delta_union_key), score(query.sort_ops, id), id)
+  return "ADDED"
 else
-  redis.log(redis.LOG_WARNING, id .. " is NOT a member of query at " .. query.key)
+  --redis.log(redis.LOG_WARNING, id .. " is NOT a member of query at " .. query.key)
   if query.realtime then
     redis.call('zrem', query.key, id)
   else
     redis.call('zadd', query.delta_diff_key, 0, id)
   end
+  return "REMOVED"
 end
