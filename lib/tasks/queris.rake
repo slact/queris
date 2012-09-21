@@ -29,6 +29,7 @@ namespace :queris do
   
   def build_index(index, check_existence=true)
     if check_existence
+      model = index.model
       print "Checking if index #{index.name} already exists..." 
       foundkeys = index.respond_to?('key') ? model.redis.keys(index.key('*', nil, true)) : []
       if foundkeys.count > 0
