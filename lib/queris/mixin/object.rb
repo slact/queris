@@ -120,7 +120,9 @@ module Queris
       end
       def build_redis_indices(build_foreign = true, indices=nil)
         start_time = Time.now
+        print "Loading data for #{name}..."
         all = self.find_all
+        puts "done."
         fetch_time = Time.now - start_time
         redis_start_time, printy, total =Time.now, 0, all.count - 1
         index_keys = []

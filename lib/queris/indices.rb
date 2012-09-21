@@ -28,6 +28,18 @@ module Queris
       raise "No redis connection found for Queris Index #{name}" unless r
       r
     end
+    
+    #MAINTENANCE OPERATION -- DO NOT USE IN PRODUCTION CODE
+    def keys
+      model.redis.keys(key('*', nil, true))
+    end
+    def exists?; keys.count > 0 ? keys : nil; end
+    def erase!
+      mykeys = keys
+      model.redis.multi do |r|
+        mykeys.each {|k| r.del k}
+      end
+    end
     def update_last?; false; end
     def self.skip_create?; false; end
     def skip_create?

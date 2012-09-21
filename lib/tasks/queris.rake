@@ -27,6 +27,29 @@ namespace :queris do
     end
   end
   
+  def build_index(index, check_existence=true)
+    if check_existence
+      print "Checking if index #{index.name} already exists..." 
+      foundkeys = index.respond_to?('key') ? model.redis.keys(index.key('*', nil, true)) : []
+      if foundkeys.count > 0
+        puts "it does."
+        if warn "delete existing data on #{model.name} #{index.name} index"
+          print "Deleting #{foundkeys.count} keys for #{index.name}..."
+          model.redis.multi do  |r|
+            foundkeys.each {|k| r.del k}
+           end
+          puts " done."
+        else
+          return false unless warn "overwrite it then", "Will not delete existing data."
+        end
+      else
+        puts "it doesn't."
+      end
+    end
+    puts "Building index #{index.name} for #{model.name}"
+    model.build_redis_index index.name
+  end
+  
   def load_models
     # Load all the application's models. Courtesy of random patch for Sunspot ()
     Rails.root.join('app', 'models').tap do |models_path|
@@ -46,36 +69,46 @@ namespace :queris do
   desc "Build a redis index in the given model"
   task :'build', [:model, :index] => :environment do |t, args|
     load_models
-    abort "Please specify a model." if args.model.nil?
-    abort "Please specify an index." if args.index.nil?
-    begin
-      model = Object.const_get args.model
-    rescue NameError
-      abort "No model #{args.model} found."
-    end
-    begin 
-      index = model.redis_index args.index
-    rescue
-      abort "No index named #{args.index} found in #{model.name}."
-    end
-    print "Checking if index #{index.name} already exists..." 
-    foundkeys = index.respond_to?('key') ? model.redis.keys(index.key('*', nil, true)) : []
-    if foundkeys.count > 0
-      puts "it does."
-      if warn "delete existing data on #{model.name} #{index.name} index"
-        print "Deleting #{foundkeys.count} keys for #{index.name}..."
-        model.redis.multi do  |r|
-          foundkeys.each {|k| r.del k}
-        end
-        puts " done."
-      else
-        abort unless warn "overwrite it then", "Will not delete existing data."
+    #abort "Please specify a model." if args.model.nil?
+    #abort "Please specify an index." if args.index.nil?
+
+    if args.model && args.model.length > 0 then
+      begin
+        model = Object.const_get args.model
+        models = [ model ]
+      rescue NameError
+        abort "No model #{args.model} found."
       end
     else
-      puts "it doesn't."
+      models = Queris.models
     end
-    puts "Building index #{index.name} for #{model.name}"
-    model.build_redis_index index.name
+
+    if args.index
+      begin 
+        index = model.redis_index args.index
+      rescue
+        abort "No index named #{args.index} found in #{model.name}."
+      end
+    end
+    
+    if model and index then
+      #just one index to build
+      build_index index
+    else
+      models.each do |model|
+        missing = []
+        model.redis_indices.each do |i|
+          missing << i unless i.skip_create? || i.exists?
+        end
+        if missing.count > 0
+          puts "#{missing.count} #{missing.count  == 1 ? 'index' : 'indices'} missing or empty in #{model.name} model: #{missing.map(&:name).join(', ')}."
+          model.build_redis_indices missing
+        else
+          puts "All indices for #{model.name} present and accounted for."
+        end
+      end
+    end
+    
   end 
 
   desc "Clear all object caches"
