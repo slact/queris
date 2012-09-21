@@ -66,7 +66,7 @@ namespace :queris do
     Queris.rebuild!(args.clear)
   end
 
-  desc "Build a redis index in the given model"
+  desc "Build all missing indices or a given redis index in the given model"
   task :'build', [:model, :index] => :environment do |t, args|
     load_models
     #abort "Please specify a model." if args.model.nil?
