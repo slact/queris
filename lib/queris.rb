@@ -157,7 +157,7 @@ module Queris
           redis.del(*delkeys) unless delkeys.count == 0
           puts "Deleted #{delkeys.count} #{self.name} keys for #{model.name}."
         end
-        model.build_redis_indices false
+        model.build_redis_indices nil, false
       end
       printf "All redis indices rebuilt in %.2f sec.\r\n", Time.now-start
       self

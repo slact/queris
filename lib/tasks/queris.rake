@@ -101,10 +101,10 @@ namespace :queris do
           missing << i unless i.skip_create? || i.exists?
         end
         if missing.count > 0
-          puts "#{missing.count} #{missing.count  == 1 ? 'index' : 'indices'} missing or empty in #{model.name} model: #{missing.map(&:name).join(', ')}."
+          puts "#{model.name} is missing #{missing.count} #{missing.count  == 1 ? 'index' : 'indices'}: #{missing.map(&:name).join(', ')}."
           model.build_redis_indices missing
         else
-          puts "All indices for #{model.name} present and accounted for."
+          puts "#{model.name} indices already built."
         end
       end
     end

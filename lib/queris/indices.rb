@@ -39,6 +39,7 @@ module Queris
       model.redis.multi do |r|
         mykeys.each {|k| r.del k}
       end
+      mykeys.count
     end
     def update_last?; false; end
     def self.skip_create?; false; end
