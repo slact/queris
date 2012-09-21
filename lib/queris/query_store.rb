@@ -51,6 +51,7 @@ module Queris
         redis.pipelined do
           redis.setex "Queris:Metaquery:expire:#{query.marshaled}", query.ttl, ""
         end
+        #puts "updated #{query} for QueryStore"
       end
 
       #NOT EFFICIENT!

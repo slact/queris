@@ -418,6 +418,7 @@ module Queris
           #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
           extend_ttl m
           m.setex(results_key(:marshaled), ttl, JSON.dump(json_redis_dump)) if live?
+          #puts "Stored script-serialized query #{q} at #{results_key(:marshaled)}"
         end
       end
       set_time_cached Time.now if track_stats?

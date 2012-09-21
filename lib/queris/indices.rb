@@ -237,9 +237,10 @@ module Queris
         metaq.results_with_gc.each do |query|
           if ForeignIndex === i
             old_id = obj.send "#{i.key_attr}_was"
-            query.update old_id, :delete => true if old_id && old_id.to_s != obj.send(i.key_attr).to_s
+            res= query.update old_id, :delete => true if old_id && old_id.to_s != obj.send(i.key_attr).to_s
           end
-          query.update update_obj, arg
+          res= query.update update_obj, arg
+          #puts "Updated #{query} - #{obj.id} - #{res}"
         end
       end
     end
@@ -275,11 +276,13 @@ module Queris
       else
         redis(obj).sadd set_key(value), obj.send(@key)
       end
+      #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{value}, key #{key(value)}')"
     end
     def remove(obj, value = nil)
       value = index_val( value || obj.send(@attribute), obj)
       (value.kind_of?(Enumerable) ? value : [ value ]).each do |val|
         redis(obj).srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
+        #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name} at #{value},  key #{set_key(val.nil? ? obj.send(@attribute) : val)}')"
       end
     end
   end
@@ -359,6 +362,7 @@ module Queris
         add(obj, val_is) unless val_is == val_was
         #removal is implicit with the way we're using sorted sets
       end
+      #redis(obj).eval "redis.log(redis.LOG_WARNING, 'updated #{obj.id} for #{name}')"
     end
     
     def incremental?; true; end
@@ -371,6 +375,7 @@ module Queris
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
       redis(obj).zadd sorted_set_key, my_val, obj.send(@key)
+      #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{val}')"
     end
     
     def increment(obj, value=nil)
@@ -380,6 +385,7 @@ module Queris
 
     def remove(obj, value=nil)
       redis(obj).zrem sorted_set_key, obj.send(@key)
+      #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name}')"
     end
 
     def before_query_op(redis, results_key, val, op=nil)
