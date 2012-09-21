@@ -235,7 +235,7 @@ module Queris
       sorting.empty? ? nil : sorting.to_sym
     end
     def sort_mult #sort multiplier (direction) -- currently, +1 or -1
-      return 0 if sort_ops.empty?
+      return 1 if sort_ops.empty?
       sort_ops.first.operands.first.value
     end
 
@@ -531,7 +531,7 @@ module Queris
           first, last = r.begin, r.end - (r.exclude_end? ? 1 : 0)
         end
         if (scrange = opt[:score])
-          rangeopt[:limit] = [ last - first, first ] if opt[:range]
+          rangeopt[:limit] = [ first, last - first ] if opt[:range]
           raise "Can't fetch results with_scores when also limiting them by score. Pick one or the other." if opt[:with_scores]
           raise "query.results :score parameter must be a Range" unless Range === scrange
           first = Queris::to_redis_float(scrange.begin * sort_mult)
