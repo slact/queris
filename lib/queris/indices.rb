@@ -33,7 +33,7 @@ module Queris
     def keys
       model.redis.keys(key('*', nil, true))
     end
-    def exists?; keys.count > 0 ? keys : nil; end
+    def exists?; keys.count > 0 ? keys.count : nil; end
     def erase!
       mykeys = keys
       model.redis.multi do |r|
