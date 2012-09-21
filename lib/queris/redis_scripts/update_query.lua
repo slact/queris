@@ -37,13 +37,14 @@ local is_member = function(op, id)
 end
 
 query_member = function(query, id)
-  for i, op in ipairs(query.ops_reverse) do
+  local revops = query.ops_reverse
+  for i, op in ipairs(revops) do
     local member = is_member(op, id)
-    redis.log(redis.LOG_WARNING , "OP: " .. op.op .. " member: " .. (member and "true" or "false") .. " id: " .. id .. " indexkey: " .. (op.key or "nokey"))
+    --redis.log(redis.LOG_WARNING , "OP: " .. op.op .. " member:" .. (member and "true" or "false") .. " id: " .. id .. " indexkey: " .. (op.key or "nokey"))
     if op.op == "intersect" then
       if not member then
         return false
-      elseif member and op.first then
+      elseif member and i == #revops then
         return true
       end
     elseif op.op == "diff" then
