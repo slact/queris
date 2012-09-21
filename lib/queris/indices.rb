@@ -288,13 +288,11 @@ module Queris
     def create(*a) end
     alias :delete :create
     alias :update :create
-    def set_key(*arg)
-      @real_index.set_key(*arg)
+    %w(set_key key skip_create? exists? keys erase!).each do |methname|
+      define_method methname do |*arg|
+        @real_index.send methname, *arg
+      end
     end
-    def key(*arg)
-      @real_index.key(*arg)
-    end
-
     def foreign_id(obj)
       obj.send(@key)
     end
