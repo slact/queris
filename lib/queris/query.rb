@@ -544,7 +544,7 @@ module Queris
           cmd = opt[:reverse] ? :zrevrange : :zrange
         end
         if block_given? && opt[:replace_command]
-          res = yield cmd, key, first, last, rangeopt
+          res = yield cmd, key, first || 0, last || -1, rangeopt
         else
           res = redis.send(cmd, key, first || 0, last || -1, rangeopt)
         end
