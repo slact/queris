@@ -67,10 +67,11 @@ module Queris
       def metaquery(arg={})
         query self, arg
       end
-
-      def find(marshaled)
+      
+      def load(marshaled)
         Marshal.load(marshaled)
       end
+      alias :find :load
       
       #wipe all metaquery info
       def clear!
@@ -105,24 +106,18 @@ module Queris
           @redis || Queris::redis(:'metaquery:slave') || redis_master
         end
       end
-      def static!; @live=false; @realtime=false; self; end
-      def realtime?; @realtime; end
-      def realtime!
-        live!
-        @realtime=true
-        self
-      end
+
       def results_with_gc
         res = results(:replace_command => true) do |cmd, key, first, last, rangeopt|
           redis.evalsha(Queris.script_hash(:results_with_ttl), [key], ["Queris:Metaquery:expire:%s"])
         end
         res = [[],[]] if res.empty?
         res.first.map! do |marshaled|
-          QueryStore.find marshaled
+          QueryStore.load marshaled
         end
         #garbage-collect the expired stuff
         res.last.each do |marshaled|
-          QueryStore.remove QueryStore.find(marshaled)
+          QueryStore.remove QueryStore.load(marshaled)
         end
         res.first
       end
