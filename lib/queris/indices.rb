@@ -195,7 +195,7 @@ module Queris
       raise Exception, "Model not passed to index." unless @model
     end
     def metaquery(arg={})
-      q = Queris::QueryStore.query(@model, :ttl => arg[:ttl] || Queris::QueryStore.metaquery_ttl)
+      q = Queris::QueryStore.query(@model, :realtime => true, :ttl => arg[:ttl] || Queris::QueryStore.metaquery_ttl)
       q.static! if arg[:static]
       unless arg[:blank]
         @model.redis_indices(live: true, attributes: arg[:attributes]).each do |i|
