@@ -62,7 +62,7 @@ namespace :queris do
   desc "Rebuild all queris indices, optionally deleting nearly everything beforehand"
   task :rebuild, [:clear] => :environment do |t, args|
     args.with_defaults(:clear => false)
-    abort unless warn "rebuild all redis indices", "All current redis indices and queries will be destroyed!", 2
+    abort unless warn "rebuild all redis indices", "All current redis indices and queries will be destroyed!", 3
     load_models
     Queris.rebuild!(args.clear)
   end
