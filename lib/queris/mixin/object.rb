@@ -137,7 +137,7 @@ module Queris
           end
         end
         redis.multi do |redis|
-          redis.del(*index_keys)
+          index_keys.each { |k| redis.del k }
           all.each_with_index do |row, i|
             if printy == i
               print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
