@@ -23,4 +23,4 @@ for i,id in ipairs(ids) do
     table.insert(notfound, i-1) --0-based index
   end
 end
-return {ret, notfound}
+return {ret, ids, notfound}

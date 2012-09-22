@@ -71,14 +71,17 @@ module Queris
           else
             limit, offset = nil, nil
           end
-          res, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, hashcache_index.key('%s',nil,true), limit, offset])
+          res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, hashcache_index.key('%s',nil,true), limit, offset])
           res.each_with_index do |h, i|
             if failed_i.first == i
               failed_i.shift
               obj = model.find_cached(h)
             else
               hash = Hash[*h] if Array === h
-              obj = hashcache_index.load_cached(hash)
+              unless (obj = hashcache_index.load_cached(hash))
+                #we could stil have received an invalid cache object (too few attributes, for example)
+                obj = model.find_cached(ids[i])
+              end
             end
             ret << obj if obj
           end
