@@ -7,4 +7,5 @@ local union_and_scores_set = redis.call('zrange', union_key, 0, -1, "withscores"
 for i=1,#union_and_scores_set, 2 do
   redis.call('zadd', results_key, union_and_scores_set[i+1], union_and_scores_set[i])
 end
+redis.call("del", union_key, diff_key)
 return 'OK'
