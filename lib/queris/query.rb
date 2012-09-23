@@ -766,8 +766,8 @@ module Queris
         sort_ops: sortops
       }
       if live? && !realtime?
-        ret[:union_delta_key] = results_key :'delta:union'
-        ret[:diff_delta_key] = results_key :'delta:diff'
+        ret[:delta_union_key] = results_key :'delta:union'
+        ret[:delta_diff_key] = results_key :'delta:diff'
       end
       ret
     end
