@@ -530,6 +530,8 @@ module Queris
         rangeopt[:with_scores] = true if opt[:with_scores]
         if (r = opt[:range])
           first, last = r.begin, r.end - (r.exclude_end? ? 1 : 0)
+          raise "Query result range must have numbers, instead there's a #{first.class} and #{last.class}" unless Numeric === first && Numeric === last
+          raise "Query results range must have whole-number endpoints" unless first.round == first && last.round == last
         end
         if (scrange = opt[:score])
           rangeopt[:limit] = [ first, last - first ] if opt[:range]
