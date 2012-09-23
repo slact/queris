@@ -5,7 +5,6 @@ if not marshaled then
   redis.log(redis.LOG_WARNING, "Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.")
   return false
 end
-redis.call("echo", marshaled)
 local success, query = pcall(cjson.decode, marshaled)
 if not success then
   redis.log(redis.LOG_WARNING, "Error unpacking json-serialized query at " .. query_marshaled_key .. " : " ..   query .. "\r\n " .. marshaled)
