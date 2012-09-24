@@ -169,6 +169,29 @@ module Queris
         build_redis_indices [ redis_index(index_name) ], true
       end
 
+      def before_query(&block)
+        @before_query_callbacks ||= []
+        @before_query_callbacks << block
+      end
+      def before_query_flush(&block)
+        @before_query_flush_callbacks ||= []
+        @before_query_flush_callbacks << block
+      end
+      def run_query_callbacks(which_ones, query)
+        callbacks = case which_ones
+        when :before, :before_run, :run
+          @before_query_callbacks
+        when :before_flush, :flush
+          @before_query_flush_callbacks
+        end
+        if callbacks
+          callbacks.each {|block| block.call(query)}
+          callbacks.count
+        else
+          0
+        end
+      end
+      
       def add_redis_index(index, opt={})
         raise "Not an index" unless index.kind_of? Index
         #if (found = redis_index_hash[index.name])

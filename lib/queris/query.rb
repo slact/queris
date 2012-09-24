@@ -320,6 +320,7 @@ module Queris
       raise "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
       @profile.id=self
       force=opt[:force] || is_stale?
+      model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
@@ -476,6 +477,7 @@ module Queris
     # or flush conditionally according to passed block: flush {|query| true }
     # when no parameters or block present, flush only this query and no subqueries
     def flush(arg={})
+      model.run_query_callbacks :before_flush, self
       return if uses_index_as_results_key?
       flushed = 0
       if block_given? #efficiency hackety hack - anonymous blocs are heaps faster than bound ones
