@@ -573,7 +573,8 @@ module Queris
     end
     alias :raw_results :results
     
-    def contains?(id)
+    def member?(id)
+      id = id.id if model === id
       run :no_update => true
       case redis.type(results_key)
       when 'set'
@@ -586,6 +587,8 @@ module Queris
         #what happened?
       end
     end
+    alias :contains? :member?
+    
     
     def result(n)
       res = results(n...n+1)
