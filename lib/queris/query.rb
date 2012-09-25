@@ -873,7 +873,7 @@ module Queris
         ops.each { |op| keys.concat op.keys(nil, true) }
       end
       keys << key
-      keys 
+      keys.uniq
     end
 
     private
