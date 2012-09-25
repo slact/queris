@@ -77,6 +77,7 @@ module Queris
           new(id).load
         end
       end
+      alias :find_cached :find
 
       def find_all #NOT FOR PRODUCTION USE!
         keys = redis.keys "#{prefix}*"
@@ -86,11 +87,9 @@ module Queris
         keys
       end
 
-      def load(hash)
-        my_id = hash["id"] || hash[:id]
-        new(my_id).load(hash)
+      def restore(hash, id)
+        new(id).load(hash)
       end
-      alias :restore :load
     end
 
     def initialize(id=nil, arg={})
@@ -187,7 +186,19 @@ module Queris
 
     def load(hash=nil, opt={})
       raise "Can't load #{self.class.name} with id #{id} -- model was specified index_only, so it was never saved." if index_only
-      (hash || (opt[:redis] || redis).hgetall(hash_key)).each do |attr_name, val|
+      unless hash
+        hash_future, hash_exists = nil, nil
+        (opt[:redis] || redis).multi do |r|
+          hash_future = r.hgetall hash_key
+          hash_exists = r.exists hash_key
+        end
+        if hash_exists.value
+          hash = hash_future.value
+        elsif not hash
+          return nil
+        end
+      end
+      hash.each do |attr_name, val|
         attr = attr_name.to_sym
         if (old_val = @attributes[attr]) != val
           @attributes_were[attr] = old_val unless old_val.nil?

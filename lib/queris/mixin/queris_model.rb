@@ -7,7 +7,7 @@ module Queris
     module QuerisModelClassMixin
       def redis_query(arg={})
         @hash_keyf ||= new.key '%s'
-        query = QuerisModelQuery.new self, arg.merge(redis: redis(true), from_hash: @hash_keyf)
+        query = QuerisModelQuery.new self, arg.merge(redis: redis(true), from_hash: @hash_keyf, delete_missing: true)
         yield query if block_given?
         query
       end

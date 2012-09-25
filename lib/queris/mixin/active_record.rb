@@ -43,7 +43,7 @@ module Queris
           obj
         end
       end
-      def restore(hash)
+      def restore(hash, id=nil)
         unless (@hashcache ||= stored_in_redis?)
           raise "Can't restore ActiveRecord model from hash -- there isn't a HashCache index present. (Don't forget to use cache_all_attributes on the model)"
         end

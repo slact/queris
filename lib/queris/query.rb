@@ -35,8 +35,11 @@ module Queris
           query.time_cached < (@expire_after || Time.at(0))
         end
       end
+
       @from_hash = arg[:from_hash]
       @restore_failed_callback = arg[:restore_failed]
+      @delete_missing = arg[:delete_missing]
+
       @track_stats = arg[:track_stats]
       @check_staleness = arg[:check_staleness]
       if block_given?
@@ -554,35 +557,39 @@ module Queris
         if block_given? && opt[:replace_command]
           res = yield cmd, key, first || 0, last || -1, rangeopt
         elsif @from_hash
-          binding.pry
           if rangeopt[:limit]
             limit, offset = *rangeopt[:limit]
           else
             limit, offset = nil, nil
           end
           raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, @from_hash, limit, offset])
-          res = []
+          res, to_be_deleted = [], []
           raw_res.each_with_index do |raw_hash, i|
             if failed_i.first == i
               failed_i.shift
               if @restore_failed_callback
-                obj = @restore_failed_callback.call raw_hash
+                obj = @restore_failed_callback.call raw_hash, self
               else
                 obj = model.find_cached raw_hash
               end
             else
               hash = Hash[*raw_hash] if Array === raw_hash
-              unless (obj = model.restore(hash))
+              unless (obj = model.restore(hash, ids[i]))
                 #we could stil have received an invalid cache object (too few attributes, for example)
                 if @restore_failed_callback
-                  obj = @restore_failed_callback.call ids[i]
+                  obj = @restore_failed_callback.call ids[i], self
                 else
                   obj = model.find_cached ids[i]
                 end
               end
             end
-            res << obj unless obj.nil?
+            if not obj.nil?
+              res << obj
+            elsif @delete_missing
+              to_be_deleted << ids[i]
+            end
           end
+          redis.evalsha Queris.script_hash(:remove_from_sets), all_keys, [to_be_deleted] unless to_be_deleted.empty?
         else
           res = redis.send(cmd, key, first || 0, last || -1, rangeopt)
         end
@@ -770,7 +777,6 @@ module Queris
       unique_params = params.dup
       each_operand do |op|
         unless Query === op.index
-          #binding.pry
           param_name = op.index.name
           unique_params.delete param_name if params[param_name] == op.value
         end
@@ -855,6 +861,15 @@ module Queris
         end
       end
     end
+    
+    def all_keys
+      keys = []
+      [ops, sort_ops].each do |ops|
+        ops.each { |op| keys.concat op.keys(nil, true) }
+      end
+      keys << key
+      keys 
+    end
 
     private
 
@@ -913,9 +928,9 @@ module Queris
       def command
         @command || self.class::COMMAND
       end
-      def keys(target_key, first = nil)
+      def keys(target_key=nil, first = nil)
         prepare
-        @keys[0]=target_key
+        @keys[0]=target_key unless target_key.nil?
         first ? @keys[1..-1] : @keys
       end
       def weights(first = nil)
@@ -946,6 +961,7 @@ module Queris
         end
         @ready = true
       end
+
       def run(redis, target, first=false)
         operands.each { |op| op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op }
         redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
