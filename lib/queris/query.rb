@@ -310,11 +310,12 @@ module Queris
     
     #check for the existence of a result set. We need to do this in case the result set is empty
     def results_exist?(r=nil)
-    return true if uses_index_as_results_key?
-    r ||= redis_master || redis
-    raise "No redis connection to check query existence" if r.nil?
-    r.exists results_key(:exists)
+      return true if uses_index_as_results_key?
+      r ||= redis_master || redis
+      raise "No redis connection to check query existence" if r.nil?
+      r.exists results_key(:exists)
     end
+    alias :exists? :results_exist?
     
     def run(opt={})
       raise "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
