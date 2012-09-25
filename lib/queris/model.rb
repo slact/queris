@@ -91,20 +91,23 @@ module Queris
         new(id).load(hash)
       end
 
-      def during_save(&block)
-        if block_given?
-          @during_save_callbacks ||= []
-          @during_save_callbacks  << block
-        else
-          @during_save_callbacks || []
+      %w(during_save before_save).each do |callback|
+        define_method callback do |&block|
+          @callbacks ||= {}
+          if block
+            @callbacks[callback] ||= []
+            @callbacks[callback]  << block
+          else
+            @callbacks[callback] || []
+          end 
         end
       end
     end
 
-    def run_save_callbacks(redis)
-      (self.class.during_save || []).each {|block| block.call(self, redis)}
+    def run_callbacks(callback, redis=nil)
+      (self.class.send(callback) || []).each {|block| block.call(self, redis)}
     end
-    private :run_save_callbacks
+    private :run_callbacks
 
     def initialize(id=nil, arg={})
       set_id id unless id.nil?
