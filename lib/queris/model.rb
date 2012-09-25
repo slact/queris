@@ -85,6 +85,12 @@ module Queris
         end
         keys
       end
+
+      def load(hash)
+        my_id = hash["id"] || hash[:id]
+        new(my_id).load(hash)
+      end
+      alias :restore :load
     end
 
     def initialize(id=nil, arg={})
@@ -211,7 +217,14 @@ module Queris
         @redis || self.class.redis || Queris.redis
       end
     end
-    
+
+    def hash_key(custom_id=nil)
+      if id.nil?
+        @id = new_id
+      end
+      @hash_key ||= "#{prefix}#{custom_id || id}"
+    end
+    alias :key :hash_key
     private
 
     def prefix
@@ -231,12 +244,7 @@ module Queris
       end
       @attr_hash
     end
-    def hash_key(custom_id=nil)
-      if id.nil?
-        @id = new_id
-      end
-      @hash_key ||= "#{prefix}#{custom_id || id}"
-    end
+    
     def new_id
       @last_id_key ||= "#{Queris.redis_prefix}#{self.class.superclass.name}:last_id:#{self.class.name}"
       redis.incr @last_id_key

@@ -19,17 +19,19 @@ module Queris
     
     module ActiveRecordClassMixin
       def redis_query(arg={}, &block)
-        ActiveRecordQuery.new self, arg, &block
+        @hashcache ||= stored_in_redis?
+        @hashkey ||= @hashcache.key '%s'
+        ActiveRecordQuery.new self, arg.merge(from_hash: @hashkey), &block
       end
       def find_all
         find :all
       end
       def stored_in_redis?
-        redis_index(:all_attribute_hashcache, Queris::HashCache)
+        @hashcache ||= redis_index(:all_attribute_hashcache, Queris::HashCache)
       end
       def find_cached(id, opt={})
-        cache = redis_index :all_attribute_hashcache, Queris::HashCache
-        if (obj = cache.fetch(id, opt))
+        @hashcache ||= stored_in_redis?
+        if (obj = @hashcache.fetch(id, opt))
           return obj
         elsif !opt[:nofallback]
           begin
@@ -37,10 +39,17 @@ module Queris
           rescue
             obj = nil
           end
-          cache.create obj if obj
+          @hashcache.create obj if obj
           obj
         end
       end
+      def restore(hash)
+        unless (@hashcache ||= stored_in_redis?)
+          raise "Can't restore ActiveRecord model from hash -- there isn't a HashCache index present. (Don't forget to use cache_all_attributes on the model)"
+        end
+        @hashcache.load_cached hash
+      end
+      
     end
   end
   
@@ -57,41 +66,6 @@ module Queris
         raise ArgumentError, ":model arg must be an ActiveRecord model, got #{model.respond_to?(:superclass) ? model.superclass.name : model} instead."
       end
       super model, arg
-    end
-
-    def results(*arg)
-      if (hashcache_index = model.stored_in_redis?)
-        arg.push({}) unless Hash === arg.last
-        arg.last.merge! :replace_command => true
-        ret = []
-        super(*arg) do |cmd, key, first, last, rangeopt|
-          raise "Results with_scores not yet implemented efficiently. Use raw_results if you must have scores." if rangeopt[:with_scores]
-          if rangeopt[:limit]
-            limit, offset = *rangeopt[:limit]
-          else
-            limit, offset = nil, nil
-          end
-          res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, hashcache_index.key('%s',nil,true), limit, offset])
-          res.each_with_index do |h, i|
-            if failed_i.first == i
-              failed_i.shift
-              obj = model.find_cached(h)
-            else
-              hash = Hash[*h] if Array === h
-              unless (obj = hashcache_index.load_cached(hash))
-                #we could stil have received an invalid cache object (too few attributes, for example)
-                obj = model.find_cached(ids[i])
-              end
-            end
-            ret << obj if obj
-          end
-        end
-        ret
-      else
-        super(*arg) do |id|
-          @model.find_cached id
-        end
-      end
     end
 
     def subquery(arg={})

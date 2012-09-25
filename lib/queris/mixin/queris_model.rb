@@ -6,7 +6,8 @@ module Queris
     
     module QuerisModelClassMixin
       def redis_query(arg={})
-        query = QuerisModelQuery.new self, arg.merge(:redis => redis(true))
+        @hash_keyf ||= new.key '%s'
+        query = QuerisModelQuery.new self, arg.merge(redis: redis(true), from_hash: @hash_keyf)
         yield query if block_given?
         query
       end
@@ -53,16 +54,6 @@ module Queris
       end
       @params = {}
       super model, arg
-    end
-
-    def results(*arg)
-      if block_given?
-        super(*arg, &Proc.new)
-      else
-        super(*arg) do |id|
-          @model.find id
-        end
-      end
     end
 
     def subquery(arg={})

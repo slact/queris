@@ -35,6 +35,8 @@ module Queris
           query.time_cached < (@expire_after || Time.at(0))
         end
       end
+      @from_hash = arg[:from_hash]
+      @restore_failed_callback = arg[:restore_failed]
       @track_stats = arg[:track_stats]
       @check_staleness = arg[:check_staleness]
       if block_given?
@@ -550,6 +552,36 @@ module Queris
         end
         if block_given? && opt[:replace_command]
           res = yield cmd, key, first || 0, last || -1, rangeopt
+        elsif @from_hash
+          binding.pry
+          if rangeopt[:limit]
+            limit, offset = *rangeopt[:limit]
+          else
+            limit, offset = nil, nil
+          end
+          raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, @from_hash, limit, offset])
+          res = []
+          raw_res.each_with_index do |raw_hash, i|
+            if failed_i.first == i
+              failed_i.shift
+              if @restore_failed_callback
+                obj = @restore_failed_callback.call raw_hash
+              else
+                obj = model.find_cached raw_hash
+              end
+            else
+              hash = Hash[*raw_hash] if Array === raw_hash
+              unless (obj = model.restore(hash))
+                #we could stil have received an invalid cache object (too few attributes, for example)
+                if @restore_failed_callback
+                  obj = @restore_failed_callback.call ids[i]
+                else
+                  obj = model.find_cached ids[i]
+                end
+              end
+            end
+            res << obj unless obj.nil?
+          end
         else
           res = redis.send(cmd, key, first || 0, last || -1, rangeopt)
         end
