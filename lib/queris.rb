@@ -128,7 +128,7 @@ module Queris
     def clear_queries!
       cleared = 0
       @models.each do |model|
-        cleared += model.clear_queries!
+        cleared += model.clear_queries! || 0
       end
       cleared
     end
