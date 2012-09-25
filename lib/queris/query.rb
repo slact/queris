@@ -524,6 +524,7 @@ module Queris
       case redis.type(key)
       when 'set'
         raise "Can't range by score on a regular results set" if opt[:score]
+        raise "Can't get a range of results on a regular results set" if opt[:range]
         if block_given? && opt[:replace_command]
           res = yield :smembers, key, nil, nil, {}
         else
