@@ -20,14 +20,14 @@ module Queris
     module ActiveRecordClassMixin
       def redis_query(arg={}, &block)
         @hashcache ||= stored_in_redis?
-        @hashkey ||= @hashcache.key '%s'
+        @hashkey ||= @hashcache.key '%s' if @hashcache
         ActiveRecordQuery.new self, arg.merge(from_hash: @hashkey), &block
       end
       def find_all
         find :all
       end
       def stored_in_redis?
-        @hashcache ||= redis_index(:all_attribute_hashcache, Queris::HashCache)
+        @hashcache = redis_index(:all_attribute_hashcache, Queris::HashCache, false) || false if @hashcache.nil?
       end
       def find_cached(id, opt={})
         @hashcache ||= stored_in_redis?
