@@ -305,7 +305,7 @@ module Queris
       r.setex results_key(:exists), ttl, ""
       if live?
         r.expire results_key(:marshaled), ttl
-        QueryStore.update self
+        QueryStore.update self if Queris.const_defined? 'QueryStore'
       end
       self
     end
