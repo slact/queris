@@ -273,15 +273,15 @@ module Queris
 
     #update query results with object(s)
     def update(obj, arg={})
-      if uses_index_as_results_key?
-        #puts "No need to update #{self}"
+      if uses_index_as_results_key? # DISCUSS : query.union(subquery) won't be updated
         return true
       end
       obj_id = model === obj ? obj.id : obj  #BUG-IN-WAITING: HARDCODED id attribute
+      myredis = arg[:redis] || redis_master || redis
       if arg[:delete]
-        ret = (redis_master || redis).zrem results_key, obj_id
+        ret = myredis.zrem results_key, obj_id
       else
-        ret = (redis_master || redis).evalsha Queris.script_hash(:update_query), [results_key(:marshaled)], [obj_id]
+        ret = myredis.evalsha Queris.script_hash(:update_query), [results_key(:marshaled)], [obj_id]
       end
       ret
     end
