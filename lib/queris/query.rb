@@ -306,8 +306,8 @@ module Queris
       return (redis_master || redis).multi{ |multir| extend_ttl multir } if r.nil?
       r.expire results_key, ttl
       r.setex results_key(:exists), ttl, ""
+      r.expire results_key(:marshaled), ttl
       if live?
-        r.expire results_key(:marshaled), ttl
         QueryStore.update self if Queris.const_defined? 'QueryStore'
       end
       self
@@ -336,9 +336,9 @@ module Queris
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
         run_static_query force, opt[:debug], opt[:forced_results_redis]
-        if live? && !uses_index_as_results_key?
+        if !uses_index_as_results_key?
           redis_master.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump)
-          Queris::QueryStore.add(self)
+          Queris::QueryStore.add(self) if live?
         end
       elsif live?
         run_live_query opt[:no_update]
@@ -497,7 +497,7 @@ module Queris
         res = (redis_master || redis).multi do |r|
           r.del results_key
           r.del results_key(:exists)
-          r.del results_key(:marshaled) if live?
+          r.del results_key(:marshaled)
         end
         Queris::QueryStore.remove(self) if live? && !uses_index_as_results_key?
         flushed += res.first if res
