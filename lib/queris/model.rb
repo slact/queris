@@ -129,41 +129,42 @@ module Queris
 
     def save
       key = hash_key #before multi
-      @noload = true
-      # to ensure atomicity, we unfortunately need two round trips to redis
-      begin
-        if @attributes_to_save.length > 0
-          bulk_response = redis.pipelined do
-            redis.watch key
-            redis.hmget key, *@attributes_to_save.keys
-          end
-          bulk_response.last.each do |attr, val| #sync with server
-            @attributes_were[attr]=val
-          end
-        end
-        bulk_response = redis.multi do |r|
-          unless index_only
-            @attributes_to_incr.each do |attr, incr_by_val|
-              r.hincrbyfloat key, attr, incr_by_val #redis server >= 2.6
-              unless (val = send(attr, true)).nil?
-                @attributes_were[attr]=val
-              end
+      noload do
+        run_callbacks :before_save
+        # to ensure atomicity, we unfortunately need two round trips to redis
+        begin
+          if @attributes_to_save.length > 0
+            bulk_response = redis.pipelined do
+              redis.watch key
+              redis.hmget key, *@attributes_to_save.keys
             end
-            r.mapped_hmset key, @attributes_to_save
-            expire_sec = self.class.expire
+            bulk_response.last.each do |attr, val| #sync with server
+              @attributes_were[attr]=val
+            end
           end
+          bulk_response = redis.multi do |r|
+            unless index_only
+              @attributes_to_incr.each do |attr, incr_by_val|
+                r.hincrbyfloat key, attr, incr_by_val #redis server >= 2.6
+                unless (val = send(attr, true)).nil?
+                  @attributes_were[attr]=val
+                end
+              end
+              r.mapped_hmset key, @attributes_to_save
+              expire_sec = self.class.expire
+            end
 
-          update_redis_indices if defined? :update_redis_indices
+            update_redis_indices if defined? :update_redis_indices
 
-          @attributes_to_save.each {|attr, val| @attributes_were[attr]=val }
-          r.expire key, expire_sec unless expire_sec.nil?
-          run_save_callbacks r
-        end
-      end while bulk_response.nil?
-      @attributes_to_save.clear
-      @attributes_to_incr.clear
-      @noload = false
-      self
+            @attributes_to_save.each {|attr, val| @attributes_were[attr]=val }
+            r.expire key, expire_sec unless expire_sec.nil?
+            run_callbacks :during_save, r
+          end
+        end while bulk_response.nil?
+        @attributes_to_save.clear
+        @attributes_to_incr.clear
+        self
+      end
     end
 
     
@@ -194,12 +195,15 @@ module Queris
     end
 
     def delete
-      key = hash_key
-      redis.multi do
-        redis.del key
-        delete_redis_indices if defined? :delete_redis_indices
+      noload do
+        key = hash_key
+        redis.multi do
+          redis.del key
+          delete_redis_indices if defined? :delete_redis_indices
+        end
+        @noload=false
+        self
       end
-      self
     end
 
     def load(hash=nil, opt={})
@@ -254,8 +258,15 @@ module Queris
       @hash_key ||= "#{prefix}#{custom_id || id}"
     end
     alias :key :hash_key
+    
     private
-
+    
+    def noload
+      @noload=true
+      ret = yield
+      @noload=false
+      ret
+    end
     def prefix
       self.class.prefix
     end
