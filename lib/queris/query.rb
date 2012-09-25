@@ -521,19 +521,14 @@ module Queris
       opt[:range]=arg.shift if Range === arg.first
       opt[:range]=(arg.shift .. arg.shift) if Numeric === arg[0] && arg[0].class == arg[1].class
       opt[:range]=(0..arg.shift) if Numeric === arg[0]
+      opt[:raw] = true if arg.member? :raw
       
-      @profile.start :results_time
       key = results_key
-      case redis.type(key)
+      case (keytype=redis.type(key))
       when 'set'
         raise "Can't range by score on a regular results set" if opt[:score]
-        raise "Can't get a range of results on a regular results set" if opt[:range]
-        if block_given? && opt[:replace_command]
-          res = yield :smembers, key, nil, nil, {}
-        else
-          res = redis.smembers key
-        end
-        raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." unless arg.empty?
+        raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." if opt[:range]
+        cmd, first, last, rangeopt = :smembers, nil, nil, {}
       when 'zset'
         rangeopt = {}
         rangeopt[:with_scores] = true if opt[:with_scores]
@@ -554,47 +549,52 @@ module Queris
         else
           cmd = opt[:reverse] ? :zrevrange : :zrange
         end
-        if block_given? && opt[:replace_command]
-          res = yield cmd, key, first || 0, last || -1, rangeopt
-        elsif @from_hash
-          if rangeopt[:limit]
-            limit, offset = *rangeopt[:limit]
-          else
-            limit, offset = nil, nil
-          end
-          raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, @from_hash, limit, offset])
-          res, to_be_deleted = [], []
-          raw_res.each_with_index do |raw_hash, i|
-            if failed_i.first == i
-              failed_i.shift
-              if @restore_failed_callback
-                obj = @restore_failed_callback.call raw_hash, self
-              else
-                obj = model.find_cached raw_hash
-              end
+      else
+        return []
+      end
+      @profile.start :results_time
+      if block_given? && opt[:replace_command]
+        res = yield cmd, key, first || 0, last || -1, rangeopt
+      elsif @from_hash && !opt[:raw]
+        if rangeopt[:limit]
+          limit, offset = *rangeopt[:limit]
+        else
+          limit, offset = nil, nil
+        end
+        raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, @from_hash, limit, offset])
+        res, to_be_deleted = [], []
+        raw_res.each_with_index do |raw_hash, i|
+          if failed_i.first == i
+            failed_i.shift
+            if @restore_failed_callback
+              obj = @restore_failed_callback.call raw_hash, self
             else
-              hash = Hash[*raw_hash] if Array === raw_hash
-              unless (obj = model.restore(hash, ids[i]))
-                #we could stil have received an invalid cache object (too few attributes, for example)
-                if @restore_failed_callback
-                  obj = @restore_failed_callback.call ids[i], self
-                else
-                  obj = model.find_cached ids[i]
-                end
+              obj = model.find_cached raw_hash
+            end
+          else
+            hash = Hash[*raw_hash] if Array === raw_hash
+            unless (obj = model.restore(hash, ids[i]))
+              #we could stil have received an invalid cache object (too few attributes, for example)
+              if @restore_failed_callback
+                obj = @restore_failed_callback.call ids[i], self
+              else
+                obj = model.find_cached ids[i]
               end
             end
-            if not obj.nil?
-              res << obj
-            elsif @delete_missing
-              to_be_deleted << ids[i]
-            end
           end
-          redis.evalsha Queris.script_hash(:remove_from_sets), all_keys, [to_be_deleted] unless to_be_deleted.empty?
+          if not obj.nil?
+            res << obj
+          elsif @delete_missing
+            to_be_deleted << ids[i]
+          end
+        end
+        redis.evalsha Queris.script_hash(:remove_from_sets), all_keys, [to_be_deleted] unless to_be_deleted.empty?
+      else
+        if cmd == :smembers
+          res = redis.send(cmd, key)
         else
           res = redis.send(cmd, key, first || 0, last || -1, rangeopt)
         end
-      else
-        res = []
       end
       if block_given? && !opt[:replace_command]
         if opt[:with_scores]
@@ -612,7 +612,10 @@ module Queris
       @profile.save
       res
     end
-    alias :raw_results :results
+    def raw_results(*arg)
+      arg.push :raw
+      results(*arg)
+    end
     
     def member?(id)
       id = id.id if model === id
