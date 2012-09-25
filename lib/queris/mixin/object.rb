@@ -15,7 +15,7 @@ module Queris
     end
 
     module ClassMixin
-      def redis_index(index_match=nil, index_class = Index)
+      def redis_index(index_match=nil, index_class = Index, strict=true)
         raise ArgumentError, "#{index_class} must be a subclass of Queris::Index" unless index_class <= Index
         case index_match
         when index_class, NilClass, Query
@@ -24,8 +24,10 @@ module Queris
           index_match = index_match.to_sym
         end
         index = redis_index_hash[index_match]
-        raise "Index #{index_match} not found in #{name}" unless index
-        raise "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
+        if strict
+          raise "Index #{index_match} not found in #{name}" unless index
+          raise "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
+        end
         index
       end
 
