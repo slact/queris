@@ -10,6 +10,7 @@ module Queris
         yield query if block_given?
         query
       end
+      alias :query :redis_query
       def add_redis_index(index, opt={})
         #support for incremental attributes
         @incremental_attr ||= {}
@@ -25,14 +26,7 @@ module Queris
       def can_increment_attribute?( attr_name )
         @incremental_attr[attr_name.to_sym]
       end
-      def find(id, opt={})
-        if opt[:redis]
-          new(id).load(nil, redis: opt[:redis])
-        else
-          new(id).load
-        end
-      end
-      
+
       private
       #don't save attributes, just index them. useful at times.
       def index_only

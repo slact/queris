@@ -7,18 +7,86 @@ module Queris
     include ObjectMixin
     include QuerisModelMixin
     
-    #get/setter
-    def self.redis(redis_client=nil)
-      if redis_client.kind_of? Redis
-        @redis = redis_client
+    class << self
+      def redis(redis_client=nil)
+        if redis_client.kind_of? Redis
+          @redis = redis_client
+        end
+        @redis
       end
-      @redis
+
+      def prefix
+        @prefix ||= "#{Queris.redis_prefix}#{self.superclass.name}:#{self.name}:"
+      end
+
+      #get/setter
+      def attributes(*attributes)
+        unless attributes.nil?
+          attributes.each do |attr|
+            attribute attr
+          end
+        end
+        @attributes
+      end
+      def attribute(attr_name)
+        @attributes ||= [] #Class instance var
+        attr_name = attr_name.to_sym
+        raise ArgumentError, "Attribute #{attr_name} already exists in Queris model #{self.name}." if @attributes.member? attr_name
+
+        define_method "#{attr_name}" do |noload=false|
+          if (val = @attributes[attr_name]).nil? && !@loaded && !noload && !@noload
+            load
+            send attr_name, true
+          else
+            val
+          end
+        end
+        define_method "#{attr_name}=" do |val| #setter
+          if @attributes_were[attr_name].nil?
+            @attributes_were[attr_name] = @attributes[attr_name] 
+          end
+          @attributes_to_save[attr_name]=val
+          @attributes[attr_name]=val
+        end
+        define_method "#{attr_name}_was" do 
+          @attributes_were[attr_name]
+        end
+        define_method "#{attr_name}_was=" do |val|
+          @attributes_were[attr_name]=val
+        end
+        private "#{attr_name}_was="
+        attributes << attr_name
+      end
+      alias :attr :attribute
+      alias :attrs :attributes
+
+      #get/setter
+      def expire(seconds=nil)
+        #note that using expire will not update indices, leading to some serious staleness
+        unless seconds.nil?
+          @expire = seconds
+        else
+          @expire
+        end
+      end
+
+      def find(id, opt={})
+        if opt[:redis]
+          new(id).load(nil, redis: opt[:redis])
+        else
+          new(id).load
+        end
+      end
+
+      def find_all #NOT FOR PRODUCTION USE!
+        keys = redis.keys "#{prefix}*"
+        keys.map! do |key|
+          self.find key[prefix.length..-1]
+        end
+        keys
+      end
     end
 
-    def self.prefix
-      @prefix ||= "#{Queris.redis_prefix}#{self.superclass.name}:#{self.name}:"
-    end
-    
     def initialize(id=nil, arg={})
       set_id id unless id.nil?
       @attributes = {}
@@ -27,76 +95,7 @@ module Queris
       @attributes_were = {}
       @redis = arg[:redis]
     end
-    
-    def self.attribute(attr_name)
-      @attributes ||= [] #Class instance var
-      attr_name = attr_name.to_sym
-      raise ArgumentError, "Attribute #{attr_name} already exists in Queris model #{self.name}." if @attributes.member? attr_name
-      
-      define_method "#{attr_name}" do |noload=false|
-        if (val = @attributes[attr_name]).nil? && !@loaded && !noload && !@noload
-          load
-          send attr_name, true
-        else
-          val
-        end
-      end
-      
-      define_method "#{attr_name}=" do |val| #setter
-        if @attributes_were[attr_name].nil?
-          @attributes_were[attr_name] = @attributes[attr_name] 
-        end
-        @attributes_to_save[attr_name]=val
-        @attributes[attr_name]=val
-      end
-      
-      define_method "#{attr_name}_was" do 
-        @attributes_were[attr_name]
-      end
-      
-      define_method "#{attr_name}_was=" do |val|
-        @attributes_were[attr_name]=val
-      end
-      private "#{attr_name}_was="
-      
-      attributes << attr_name
-    end
 
-    def increment(attr_name, delta_val)
-      raise ArgumentError, "Can't increment attribute #{attr_name} because it is used by at least one non-incrementable index." unless self.class.can_increment_attribute? attr_name
-      raise ArgumentError, "Can't increment attribute #{attr_name} by non-numeric value <#{delta_val}>. Increment only by numbers, please." unless delta_val.kind_of? Numeric
-      
-      @attributes_to_incr[attr_name.to_sym]=delta_val
-      unless (val = send(attr_name, true)).nil?
-        send "#{attr_name}=", val + delta_val
-      end
-      self
-    end
-
-    #get/setter
-    def self.attributes(*attributes)
-      unless attributes.nil?
-        attributes.each do |attr|
-          attribute attr
-        end
-      end
-      @attributes
-    end
-    class << self
-      alias :attr :attribute
-      alias :attrs :attributes
-    end
-
-    #get/setter
-    def self.expire(seconds=nil)
-      #note that using expire will not update indices, leading to some serious staleness
-      unless seconds.nil?
-        @expire = seconds
-      else
-        @expire
-      end
-    end
-    
     def set_id(id, overwrite=false)
       raise "id already exists and is #{self.id}" unless overwrite || self.id.nil?
       @id = id
@@ -144,6 +143,19 @@ module Queris
       self
     end
 
+    
+    def increment(attr_name, delta_val)
+      raise ArgumentError, "Can't increment attribute #{attr_name} because it is used by at least one non-incrementable index." unless self.class.can_increment_attribute? attr_name
+      raise ArgumentError, "Can't increment attribute #{attr_name} by non-numeric value <#{delta_val}>. Increment only by numbers, please." unless delta_val.kind_of? Numeric
+      
+      @attributes_to_incr[attr_name.to_sym]=delta_val
+      unless (val = send(attr_name, true)).nil?
+        send "#{attr_name}=", val + delta_val
+      end
+      self
+    end
+
+
     def attribute_diff(attr)
       @attributes_to_incr[attr.to_sym]
     end
@@ -188,14 +200,6 @@ module Queris
       self
     end
     
-    def self.find_all
-      keys = redis.keys "#{prefix}*"
-      keys.map! do |key|
-        self.find key[prefix.length..-1]
-      end
-      keys
-      
-    end
 
     def redis=(r)
       @redis=r
@@ -231,7 +235,7 @@ module Queris
       if id.nil?
         @id = new_id
       end
-      @hash_key ||= "#{prefix}#{id}"
+      @hash_key ||= "#{prefix}#{custom_id || id}"
     end
     def new_id
       @last_id_key ||= "#{Queris.redis_prefix}#{self.class.superclass.name}:last_id:#{self.class.name}"
