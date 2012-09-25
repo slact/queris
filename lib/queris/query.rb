@@ -797,7 +797,9 @@ module Queris
           expire_after: @expire_after,
           track_stats: @track_stats,
           live: @live,
-          realtime: @realtime
+          realtime: @realtime,
+          from_hash: @from_hash,
+          delete_missing: @delete_missing
         }
       }
     end
