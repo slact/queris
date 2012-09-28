@@ -141,6 +141,10 @@ module Queris
       clear_cache! + clear_queries!
     end
     
+    def info
+      models.each &:data_info
+    end
+    
     #reconnect all redic clients
     def reconnect
       all_redises.each { |r| r.client.reconnect }

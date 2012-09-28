@@ -28,11 +28,32 @@ module Queris
       raise "No redis connection found for Queris Index #{name}" unless r
       r
     end
-    
+
     #MAINTENANCE OPERATION -- DO NOT USE IN PRODUCTION CODE
     def keys
-      model.redis.keys(key('*', nil, true))
+      if keypattern
+        (redis || model.redis).keys keypattern
+      else
+        []
+      end
     end
+    def keypattern
+      @keypattern ||= key('*', nil, true) if respond_to? :key
+    end
+    def distribution
+      k = keys
+      counts = (redis || model.redis).multi do |r|
+        k.each do |thiskey|
+          r.evalsha Queris.script_hash(:multisize), [thiskey]
+        end
+      end
+      Hash[k.zip counts]
+    end
+    def distribution_summary
+      keycounts = distribution.values
+      "#{name}: #{keycounts.reduce(0){|a,b| a+b}} ids in #{keycounts.count} redis keys."
+    end
+
     def exists?; keys.count > 0 ? keys.count : nil; end
     def erase!
       mykeys = keys

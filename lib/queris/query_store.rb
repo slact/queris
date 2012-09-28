@@ -61,7 +61,8 @@ module Queris
         q.results
       end
       
-      def query(model, arg={})
+      def query(model=nil, arg={})
+        model ||= self
         Metaquery.new(self, arg.merge(:target_model => model, :realtime => true))
       end
       def metaquery(arg={})

@@ -88,6 +88,16 @@ module Queris
       def query(arg={}, &block)
         redis_query arg, &block
       end
+
+      def data_info
+        puts "#{self.name} model info:"
+        redis_indices.each do |i|
+          puts "  #{i.distribution_summary}"
+        end
+        querykeys = (redis || Queris.redis).keys query.results_key(nil, "*")
+        puts "  #{querykeys.count} query-related keys"
+      end
+
       def clear_queries!
         q = query
         querykeys = redis.keys q.results_key(nil, "*")
