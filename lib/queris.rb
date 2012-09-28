@@ -70,7 +70,11 @@ module Queris
       
       #throw our lua scripts onto the server
       redis_scripts.each do |name, contents|
-        hash = redis.script 'load', contents
+        begin
+          hash = redis.script 'load', contents
+        rescue Redis::CommandError => e
+          raise "Error loading script #{name}: #{e}"
+        end
         raise "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
       end
 
