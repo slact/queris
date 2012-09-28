@@ -57,7 +57,7 @@ def test
   r2.query
   o = Foo.new
   o.a= 1
-  qqq=Queris::QueryStore.query(Foo, realtime: true).union(:a).union(:b).union(:b2).sort(:expire)
+  qqq=Queris::QueryStore.query(Foo, realtime: true).union(:a).union(:b).union(:b2)
   qqq.flush; qqq.count
   mq=Queris::QueryStore.metaquery.union(:index)
   mq.flush; mq.count
