@@ -561,7 +561,7 @@ module Queris
         else
           limit, offset = nil, nil
         end
-        raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first, last, @from_hash, limit, offset])
+        raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first || 0, last || -1, @from_hash, limit, offset])
         res, to_be_deleted = [], []
         raw_res.each_with_index do |raw_hash, i|
           if failed_i.first == i
