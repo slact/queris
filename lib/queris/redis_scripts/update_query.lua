@@ -2,7 +2,7 @@ local query_marshaled_key= KEYS[1]
 local id = ARGV[1]
 local marshaled = redis.call("get", query_marshaled_key)
 if not marshaled then
-  redis.log(redis.LOG_WARNING, "Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.")
+  redis.log(redis.LOG_NOTICE, "Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.")
   return false
 end
 local success, query = pcall(cjson.decode, marshaled)
