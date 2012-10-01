@@ -99,7 +99,8 @@ module Queris
       obj.send @attribute
     end
     def value_was(obj)
-      obj.send "#{@attribute}_was"
+      msg = "#{@attribute}_was"
+      obj.send msg if obj.respond_to? msg
     end
     def value_diff(obj)
       obj.attribute_diff @attribute if obj.respond_to? :attribute_diff
