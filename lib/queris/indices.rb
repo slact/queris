@@ -51,7 +51,7 @@ module Queris
     end
     def distribution_summary
       keycounts = distribution.values
-      "#{name}: #{keycounts.reduce(0){|a,b| a+b}} ids in #{keycounts.count} redis keys."
+      "#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis keys."
     end
 
     def exists?; keys.count > 0 ? keys.count : nil; end
@@ -197,6 +197,11 @@ module Queris
     
     alias :load :fetch
       
+    def distribution_summary
+      keycounts = distribution.values
+      "HashCache: #{keycounts.count} objects cached."
+    end
+    
     private 
     def cache_attributes(obj, attrs)
       key = hash_key obj
@@ -422,6 +427,10 @@ module Queris
     def after_query_op(redis, results_key, val, op=nil)
       redis.del @temp_key
       @temp_key = nil
+    end
+    def distribution_summary
+      keycounts = distribution.values
+      "#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis key."
     end
     private
     def remove_inverse_range(redis, key, val)
