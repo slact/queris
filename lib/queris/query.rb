@@ -334,7 +334,7 @@ module Queris
         run_static_query force, opt[:debug], opt[:forced_results_redis]
         if !uses_index_as_results_key?
           redis_master.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump)
-          Queris::QueryStore.add(self) if live?
+          #Queris::QueryStore.add(self) if live?
         end
       elsif live?
         run_live_query opt[:no_update]
@@ -495,7 +495,7 @@ module Queris
           r.del results_key(:exists)
           r.del results_key(:marshaled)
         end
-        Queris::QueryStore.remove(self) if live? && !uses_index_as_results_key?
+        #Queris::QueryStore.remove(self) if live? && !uses_index_as_results_key?
         flushed += res.first if res
       end
       flushed
