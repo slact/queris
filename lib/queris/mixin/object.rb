@@ -243,6 +243,7 @@ module Queris
       # index: name - only given index is live
       # blank: true - no indices are live (will probably be set later)
       def live_queries(opt={})
+        raise "live queries currently disabled, they're a little buggy."
         raise "Queris must have a master or metaquery redis for live queries (Queris.add_redis redis_client)." if Queris.redis(:master, :metaquery).nil?
         require "queris/query_store"
         Queris::LiveQueryIndex.new :name => '_live_queries', :model => self
