@@ -9,4 +9,5 @@ for i, key in ipairs(keys) do
     removed = removed + redis.call('zrem', key, id)
   end
 end
+redis.log(redis.LOG_NOTICE, "Queris deleted " .. removed .. " ids from " .. #keys .. " keys.")
 return removed
