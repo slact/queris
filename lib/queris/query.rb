@@ -584,7 +584,7 @@ module Queris
             to_be_deleted << ids[i]
           end
         end
-        redis.evalsha Queris.script_hash(:remove_from_sets), all_keys, [to_be_deleted] unless to_be_deleted.empty?
+        redis.evalsha Queris.script_hash(:remove_from_sets), all_keys, to_be_deleted unless to_be_deleted.empty?
       else
         if cmd == :smembers
           res = redis.send(cmd, key)
