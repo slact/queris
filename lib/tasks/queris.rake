@@ -1,3 +1,4 @@
+#!ruby
 namespace :queris do
   def confirm
     if $stdin.respond_to? 'getch'
@@ -130,5 +131,11 @@ namespace :queris do
     load_models
     abort unless warn "clear all queries and caches", "All caches and queries will be deleted", 2
     puts "Deleted #{Queris.clear!} keys."
+  end
+
+  desc "Queris data sumaries"
+  task :info => :environment do
+    load_models
+    Queris.info
   end
 end
