@@ -258,15 +258,15 @@ module Queris
       @hash_key ||= "#{prefix}#{custom_id || id}"
     end
     alias :key :hash_key
-    
-    private
-    
+
     def noload
       @noload=true
       ret = yield
       @noload=false
       ret
     end
+
+    private
     def prefix
       self.class.prefix
     end
