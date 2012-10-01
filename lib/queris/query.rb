@@ -54,11 +54,7 @@ module Queris
     private :redis_master
     
     def redis
-      if live?
-        @redis || redis_master || model.redis
-      else
-        @redis || model.redis || Queris.redis(:slave) || redis_master
-      end
+      @redis || model.redis || Queris.redis(:slave) || redis_master
     end
     
     def use_redis(redis_instance)
