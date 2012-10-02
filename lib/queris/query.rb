@@ -277,7 +277,7 @@ module Queris
       if arg[:delete]
         ret = myredis.zrem results_key, obj_id
       else
-        ret = myredis.evalsha Queris.script_hash(:update_query), [results_key(:marshaled)], [obj_id]
+        ret = myredis.zadd results_key(:delta), 0, obj_id
       end
       ret
     end
@@ -337,7 +337,7 @@ module Queris
           #Queris::QueryStore.add(self) if live?
         end
       elsif live?
-        run_live_query opt[:no_update]
+        update_results_with_delta_set unless opt[:no_update]
       else
         @profile.record :cache_hit, 1
         extend_ttl
@@ -353,23 +353,11 @@ module Queris
     end
     alias :query :run
 
-    def run_live_query(skip_update = nil)
-      if realtime?
-        #nothing to do but update ttl
-        #puts "#{self} is a realtime query, nothing to do..."
-        realtime!
-        return extend_ttl
-      end
-      return if skip_update
-      #puts "#{self} live query"
-      union_key= results_key 'delta:union'
-      diff_key= results_key 'delta:diff'
-
-      #all live operations happen on master
-      (redis_master || redis).evalsha Queris.script_hash(:apply_query_delta), [results_key, union_key, diff_key]
+    def update_results_with_delta_set
+      redis.evalsha Queris.script_hash(:update_query), [results_key(:marshaled)]
       extend_ttl
     end
-    private :run_live_query
+    private :update_results_with_delta_set
 
     def run_static_query(force=nil, debug=nil, forced_results_redis=nil)
       @profile.start :time
@@ -398,10 +386,11 @@ module Queris
             debug_info << [op.to_s, pipelined_redis.zcard(temp_results_key)] if debug
           end
         end
-        pipelined_redis.evalsha Queris.script_hash(:rename_if_present), [temp_results_key, results_key]
+        pipelined_redis.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
         #puts "QUERY TTL: ttl"
         if redis == redis_master
           extend_ttl pipelined_redis
+          pipelined_redis.del results_key :delta #just in case it exists
         end
       end
       @profile.finish :own_time
@@ -411,6 +400,7 @@ module Queris
         redis_master.multi do |m|
           m.setnx results_key, 1
           #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
+          pipelined_redis.del results_key :delta #just in case it exists
           extend_ttl m
         end
       end
@@ -503,7 +493,7 @@ module Queris
     #results(x..y, :score =>a..b) results from x to y with scores in given score range
     #results(x..y, :with_scores) return scores with results as [ [score1, res1], [score2, res2] ... ]
     def results(*arg)
-      run :no_update => true
+      run :no_update => !realtime?
       opt= Hash === arg.last ? arg.pop : {}
       opt[:reverse]=true if arg.member?(:reverse)
       opt[:with_scores]=true if arg.member?(:with_scores)
@@ -608,7 +598,7 @@ module Queris
     
     def member?(id)
       id = id.id if model === id
-      run :no_update => true
+      run :no_update => !realtime?
       case redis.type(results_key)
       when 'set'
         redis.sismember(results_key, id)
@@ -665,7 +655,7 @@ module Queris
     end
     
     def count(opt={})
-      run :no_update => true
+      run :no_update => !realtime?
       key = results_key
       case redis.type(key)
       when 'set'
@@ -801,15 +791,12 @@ module Queris
       sort_ops.each{|op| sortops.concat(op.json_redis_dump)}
       ret = {
         key: results_key,
+        delta_key: results_key(:delta),
         live: live?,
         realtime: realtime?,
         ops_reverse: queryops,
         sort_ops: sortops
       }
-      if live? && !realtime?
-        ret[:delta_union_key] = results_key :'delta:union'
-        ret[:delta_diff_key] = results_key :'delta:diff'
-      end
       ret
     end
 
