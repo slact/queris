@@ -387,6 +387,7 @@ module Queris
           end
         end
         pipelined_redis.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
+        debug_info << ["result", pipelined_redis.zcard(results_key)] if debug
         #puts "QUERY TTL: ttl"
         if redis == redis_master
           extend_ttl pipelined_redis
@@ -411,7 +412,7 @@ module Queris
       unless debug_info.empty?
         #debug_info.map {|line| "#{line.first.symbol} #{line.first.attribute} .#{line[0].value}
         puts "Debugging query #{self}"
-        debug_info.each { |l| puts " #{l.last.value}   #{l.first}"}
+        debug_info.each { |l| puts " #{Redis::Future === l.last ? l.last.value : l.last}   #{l.first}"}
       end
     end
     private :run_static_query
