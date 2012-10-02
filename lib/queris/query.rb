@@ -1018,6 +1018,9 @@ module Queris
       end
       def target_key_weight; 0; end
       def operand_key_weight(op); op.value; end
+      def run(redis, target, first=false)
+        redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
+      end
     end
     
     def use_index *arg

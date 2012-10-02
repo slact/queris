@@ -435,7 +435,7 @@ module Queris
     private
     def remove_inverse_range(redis, key, val)
       first, last = val.begin.to_f, val.end.to_f
-      if (first < last)
+      if (first <= last)
         redis.zremrangebyscore key, '-inf', "(#{first}" unless first == -Float::INFINITY
         redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{last}", 'inf' unless last == Float::INFINITY
       else
