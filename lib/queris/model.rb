@@ -12,7 +12,7 @@ module Queris
         if redis_client.kind_of? Redis
           @redis = redis_client
         end
-        @redis
+        @redis || Queris.redis
       end
 
       def prefix

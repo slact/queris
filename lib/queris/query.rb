@@ -54,7 +54,7 @@ module Queris
     private :redis_master
     
     def redis
-      @redis || model.redis || Queris.redis(:slave) || redis_master
+      @redis || Queris.redis(:slave) || model.redis || redis_master
     end
     
     def use_redis(redis_instance)
@@ -312,7 +312,7 @@ module Queris
     #check for the existence of a result set. We need to do this in case the result set is empty
     def results_exist?(r=nil)
       return true if uses_index_as_results_key?
-      r ||= redis_master || redis
+      r ||= redis
       raise "No redis connection to check query existence" if r.nil?
       r.exists results_key(:exists)
     end
@@ -371,33 +371,26 @@ module Queris
     end
     private :run_live_query
 
-    attr_accessor :share_results
-    def share_results? #run query on master or slave
-      live? || @share_results
-    end
-    def share_results!; @share_results = true; self; end
     def run_static_query(force=nil, debug=nil, forced_results_redis=nil)
       @profile.start :time
-      master = redis_master
-      results_redis = forced_results_redis || share_results? ? master : redis
       # we must use the same redis server everywhere to prevent replication race conditions
       # (query on slave, subquery on master that doesn't finish replicating to slave when the query needs subquery results)
       # redis cluster should, I suspect, provide the tools to address this in the future.
       subq_exist ={} 
-      results_redis.multi do |r|
+      redis.multi do |r|
         @subqueries.each { |q| subq_exist[q] = q.results_exist? r }
       end
       subq_exist.each do |q, exist|
         next if (Redis::Future === exist ? exist.value : exist)
-        q.query :force => force, :debug => debug, :forced_results_redis => results_redis
+        q.run :force => force, :debug => debug
       end
       
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
       @profile.start :own_time
       debug_info = []
       temp_results_key = results_key "querying:#{SecureRandom.hex}"
-      results_redis.pipelined do |pipelined_redis|
-      #pipelined_redis = results_redis
+      redis.pipelined do |pipelined_redis|
+      #pipelined_redis = redis #for debugging
         first_op = ops.first
         [ops, sort_ops].each do |ops|
           ops.each do |op|
@@ -407,15 +400,15 @@ module Queris
         end
         pipelined_redis.evalsha Queris.script_hash(:rename_if_present), [temp_results_key, results_key]
         #puts "QUERY TTL: ttl"
-        if results_redis == master
-          extend_ttl(pipelined_redis)
+        if redis == redis_master
+          extend_ttl pipelined_redis
         end
       end
       @profile.finish :own_time
-      unless master.nil? || master == results_redis
+      unless redis_master.nil? || redis_master == redis
         #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
         #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
-        master.multi do |m|
+        redis_master.multi do |m|
           m.setnx results_key, 1
           #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
           extend_ttl m
