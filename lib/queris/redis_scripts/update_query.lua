@@ -38,7 +38,7 @@ local is_member = function(op, id)
     return redis.call('sismember', op.key, id) == 1
   elseif t == 'zset' then
     local score = tonumber(redis.call('zscore', op.key, id))
-    log("found " .. id .. " in zset " .. op.key .. " with score " ..  score, "debug")
+    --log("found " .. id .. " in zset " .. op.key .. " with score " ..  score, "debug")
     local m = score and true
     if op.min then m = m and score > op.min end
     if op.max then m = m and score < op.max end
