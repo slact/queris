@@ -314,7 +314,7 @@ module Queris
       return true if uses_index_as_results_key?
       r ||= redis
       raise "No redis connection to check query existence" if r.nil?
-      r.exists results_key(:exists)
+      r.evalsha Queris.script_hash(:query_exists), [results_key, results_key(:exists)]
     end
     alias :exists? :results_exist?
     
