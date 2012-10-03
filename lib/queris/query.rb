@@ -401,7 +401,7 @@ module Queris
         redis_master.multi do |m|
           m.setnx results_key, 1
           #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
-          pipelined_redis.del results_key :delta #just in case it exists
+          m.del results_key :delta #just in case it exists
           extend_ttl m
         end
       end
