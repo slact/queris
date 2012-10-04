@@ -302,13 +302,19 @@ module Queris
         ret.unshift(format % ["Role", "Time", "Roundtrips"]) if ret.count>0
         ret.empty? ? "no data" : ret.join("\r\n")
       end
-      def totals
+      def totals(what=nil)
         t, rt = 0, 0
         Queris.all_redises.map do |r|
           t += time(r)
           rt += roundtrips(r)
         end
-        return "time: #{t.round(3)}sec, roundtrips: #{rt}"
+        if what == :time
+          "time: #{t.round(3)}sec"
+        elsif what == :roundtrips
+          "roundtrips: #{rt}"
+        else
+          "time: #{t.round(3)}sec, roundtrips: #{rt}"
+        end
       end
     end
   end
