@@ -173,8 +173,12 @@ module Queris
           sort_query.sort false #unsort sorted query - legacy behavior, probably a bad idea in the long run
         end
       else
-        if index.respond_to?('[]') && index[0] == '-'
-          reverse, index = true, index[1..-1]
+        if index.respond_to?('[]') 
+          if index[0] == '-'
+            reverse, index = true, index[1..-1]
+          elsif index[0] == '+'
+            reverse, index = false, index[1..-1]
+          end
         end
         if index
           index = use_index index #accept string index names and indices and queries
