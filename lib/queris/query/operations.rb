@@ -76,7 +76,7 @@ module Queris
         return if @ready
         @keys, @weights = [:result_key], [target_key_weight]
         operands.each do |op|
-          k = op.index.key op.value
+          k = block_given? ? yield(op) : op.index.key_for_query(op.value)
           num_keys = @keys.length
           if Array === k
             @keys |= k
@@ -146,6 +146,10 @@ module Queris
       end
       def target_key_weight; 0; end
       def operand_key_weight(op); op.value; end
+      def prepare
+        #don't trigger the rangehack
+        super { |op| op.index.key op.value }
+      end
       def run(redis, target, first=false)
         redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
       end

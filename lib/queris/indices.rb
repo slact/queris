@@ -293,7 +293,7 @@ module Queris
       end
     end
     alias :key :set_key
-    
+    alias :key_for_query :key
     def add(obj, value = nil)
       value = index_val( value || obj.send(@attribute), obj)
       #obj_id = obj.send(@key)
@@ -377,9 +377,16 @@ module Queris
       @value.call val, obj
     end
     def sorted_set_key(val=nil, prefix=nil, raw_val=false)
-      @temp_key || (@keyf) %[prefix || @model.redis_prefix, "(...)"]
+      @keyf %[prefix || @model.redis_prefix, "(...)"]
     end
     alias :key :sorted_set_key
+    def key_for_query(val=nil)
+      if val.nil? 
+        key
+      else
+        "#{key}:rangehack:#{val.to_s}"
+      end
+    end
     
     def update(obj)
       if !(diff = value_diff(obj)).nil?
@@ -416,17 +423,20 @@ module Queris
     end
 
     def before_query_op(redis, results_key, val, op=nil)
-      #copy to temp key
-      @random||=SecureRandom.hex
-      temp = "#{results_key}:temp:rangehack:#{@random}"
-      redis.zunionstore temp, [ key ]
-      val = (val..val) unless Enumerable === val
-      remove_inverse_range redis, temp, val
-      @temp_key = temp
+      #copy to temp key if needed
+      unless val.nil?
+        rangehack_key = key_for_query val
+        redis.zunionstore rangehack_key, [ key ]
+        val = (val..val) unless Enumerable === val
+        remove_inverse_range redis, rangehack_key, val
+      end
     end
     def after_query_op(redis, results_key, val, op=nil)
-      redis.del @temp_key
-      @temp_key = nil
+      unless val.nil?
+        rangehack_key = key_for_query val
+        raise "RangeIndex rangehack bug" if key(val) == rangehack_key
+        redis.del key_for_query(val)
+      end
     end
     def distribution_summary
       keycounts = distribution.values

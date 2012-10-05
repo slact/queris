@@ -655,6 +655,7 @@ module Queris
     def key arg=nil
       results_key
     end
+    alias :key_for_query :key
     
     def id
       digest results_key
