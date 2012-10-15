@@ -23,6 +23,9 @@ module Queris
     def key_attr
       @key
     end
+    def json_redis_dump(hash={})
+      hash
+    end
     def redis(obj=nil)
       r=@redis || @model.redis || Queris.redis(:index, :slave, :master) || (!obj.nil? && obj.redis)
       raise "No redis connection found for Queris Index #{name}" unless r
@@ -454,6 +457,26 @@ module Queris
     end
   end
   
+  class ExpiringPresenceIndex < RangeIndex
+    def initialize(arg={})
+      arg[:value] = proc{|v,o| Time.now.utc.to_f}
+      raise "Expiring Presence index must have its time-to-live (:ttl) set." unless arg[:ttl]
+      super arg
+    end
+    def json_redis_dump(hash={})
+      hash[:index]=self.class.name.split('::').last
+      hash[:nocompare]=true
+      hash[:ttl]=@ttl
+    end
+    def key_for_query(val=nil)
+      key(val)
+    end
+    def before_query_op(redis, results_key, val, op=nil)
+      redis.zremrangebyscore key, '-inf', Time.now.utc.to_f - @ttl
+    end
+    def after_query_op(redis, results_key, val, op=nil)
+    end
+  end
   
   #a stateful index that cannot be rebuilt without losing data.
   class AccumulatorIndex < RangeIndex

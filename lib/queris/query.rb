@@ -359,7 +359,7 @@ module Queris
     alias :query :run
 
     def update_results_with_delta_set
-      redis.evalsha Queris.script_hash(:update_query), [results_key(:marshaled)]
+      redis.evalsha Queris.script_hash(:update_query), [results_key(:marshaled)], [Time.now.utc.to_f]
       extend_ttl
     end
     private :update_results_with_delta_set
