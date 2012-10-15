@@ -391,25 +391,18 @@ module Queris
             debug_info << [op.to_s, pipelined_redis.zcard(temp_results_key)] if debug
           end
         end
-        pipelined_redis.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
-        debug_info << ["result", pipelined_redis.zcard(results_key)] if debug
         #puts "QUERY TTL: ttl"
-        if redis == redis_master
-          extend_ttl pipelined_redis
-          pipelined_redis.del results_key :delta #just in case it exists
+        (redis_master || pipelined_redis).pipelined do |r|
+          r.del results_key :delta #just in case it exists
+          #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
+          #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
+          r.setnx results_key, 1 unless pipelined_redis == r
+          pipelined_redis.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key] # works as long as we do this after the setnx on master
+          extend_ttl r
         end
+        debug_info << ["result", pipelined_redis.zcard(results_key)] if debug
       end
       @profile.finish :own_time
-      unless redis_master.nil? || redis_master == redis
-        #Redis slaves can't expire keys by themselves (for the sake of data consistency). So we have to store some dummy value at results_keys in master with an expire.
-        #this is gnarly. Hopefully future redis versions will give slaves optional EXPIRE behavior.
-        redis_master.multi do |m|
-          m.setnx results_key, 1
-          #setnx because someone else might've created it while the app was twiddling its thumbs. Setting it again would erase some slave's result set
-          m.del results_key :delta #just in case it exists
-          extend_ttl m
-        end
-      end
       set_time_cached Time.now if track_stats?
       @profile.finish :time
       @profile.save
