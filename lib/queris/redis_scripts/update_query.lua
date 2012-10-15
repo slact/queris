@@ -15,6 +15,7 @@ local log = function(msg, level)
 end
 
 local query_marshaled_key= KEYS[1]
+local now = tonumber(ARGV[1])
 local marshaled = redis.call("get", query_marshaled_key)
 if not marshaled then
   log("Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.", "warning")
@@ -40,10 +41,14 @@ local is_member = function(op, id)
     local score = tonumber(redis.call('zscore', op.key, id))
     --log("found " .. id .. " in zset " .. op.key .. " with score " ..  score, "debug")
     local m = score and true
-    if op.min then m = m and score > op.min end
-    if op.max then m = m and score < op.max end
-    if op.max_or_equal then m = m and score <= op.max_or_equal end
-    if op.equal then m = m and score == op.equal end
+    if op.index == "ExpiringPresenceIndex" then
+      m = m and (score + op.ttl) >= now
+    else
+      if op.min then m = m and score > op.min end
+      if op.max then m = m and score < op.max end
+      if op.max_or_equal then m = m and score <= op.max_or_equal end
+      if op.equal then m = m and score == op.equal end
+    end
     return m
   elseif t == 'none' then
     return false
