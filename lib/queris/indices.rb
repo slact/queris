@@ -52,7 +52,7 @@ module Queris
       end
       Hash[k.zip counts]
     end
-    def distribution_summary
+    def info
       keycounts = distribution.values
       "#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis keys."
     end
@@ -200,7 +200,7 @@ module Queris
     
     alias :load :fetch
       
-    def distribution_summary
+    def info
       keycounts = distribution.values
       "HashCache: #{keycounts.count} objects cached."
     end

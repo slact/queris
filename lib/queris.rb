@@ -142,7 +142,7 @@ module Queris
     end
     
     def info
-      models.each &:data_info
+      models.each &:info
     end
     
     #reconnect all redic clients
