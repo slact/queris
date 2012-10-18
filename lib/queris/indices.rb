@@ -1,7 +1,8 @@
 require "securerandom"
 module Queris
   class Index
-    attr_accessor :name, :redis, :model, :attribute
+    attr_accessor :name, :redis, :model, :attribute, :live
+    alias :live? :live
     def initialize(arg={})
       arg.each do |opt, val|
         instance_variable_set "@#{opt}".to_sym, val
@@ -54,7 +55,19 @@ module Queris
     end
     def info
       keycounts = distribution.values
-      "#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis keys."
+      ret="#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis keys."
+      if live?
+        live_queries=(redis || model.redis).zrange(live_queries_key, 0, -1)
+        queries_exist=(redis || model.redis).multi do |r|
+          live_queries.each do |key|
+            r.exists "#{key}:exists"
+          end
+        end
+        num_existing_live_queries = 0
+        queries_exist.each { |val| num_existing_live_queries += 1 if val }
+        ret << " #{live_queries.count} live queries (#{num_existing_live_queries} exist)"
+      end
+      ret
     end
 
     def exists?; keys.count > 0 ? keys.count : nil; end
@@ -108,11 +121,30 @@ module Queris
     def value_diff(obj)
       obj.attribute_diff @attribute if obj.respond_to? :attribute_diff
     end
+    def live_queries_key
+      @live_queries_key||="#{@redis_prefix||@model.redis_prefix}#{self.class.name.split('::').last}:#{@name}:live_queries"
+    end
+    def add_live_query(query, r=nil)
+      (r||redis).zadd live_queries_key, 0, query.key
+      (r||redis).eval "redis.log(redis.LOG_NOTICE, 'index #{@model.name} #{@name} update: added #{query} live query')"
+    end
+    def no_live_update
+      @skip_live_update = true
+      ret = yield
+      @skip_live_update = nil
+      ret
+    end
+    def update_live_queries(obj, r=nil)
+      (r||redis).evalsha(Queris.script_hash(:update_live_index), [live_queries_key], [obj.send(@key)]) if live? && !@skip_live_update
+    end
     def update(obj)
       val_is, val_was = value_is(obj), value_was(obj)
       if(val_is != val_was)
-        remove(obj, val_was)
-        add(obj)
+        no_live_update do
+          remove(obj, val_was)
+          add(obj)
+        end
+        update_live_queries obj
       end
     end
     def create(obj)
@@ -214,73 +246,8 @@ module Queris
       end
       redis.mapped_hmset key, marshaled
     end
-    
   end
-  
-  class LiveQueryIndex < Index
-    def self.skip_create?; true; end
-    def update_last?; true; end
-    def initialize(*arg)
-      super(*arg)
-      raise Exception, "Model not passed to index." unless @model
-    end
-    def metaquery(arg={})
-      q = Queris::QueryStore.query(@model, :realtime => true, :ttl => arg[:ttl] || Queris::QueryStore.metaquery_ttl)
-      q.static! if arg[:static]
-      unless arg[:blank]
-        @model.redis_indices(live: true, attributes: arg[:attributes]).each do |i|
-          q.union i
-        end
-      end
-      q
-    end
-    def update(obj, value=nil, arg={})
-      queries={}
-      if Query === obj
-        indices = obj.all_live_indices
-      else
-        if arg[:delete]
-          indices = @model.redis_indices(live: true)
-        else
-          indices = @model.redis_indices(live: true, attributes: obj.changed)
-        end
-      end
 
-      indices.each do |i|
-        if ForeignIndex === i && !(Query === obj)
-          queries[i] ||= [i.foreign_id(obj), metaquery(blank: true).union(i)]
-        else
-          queries[:native] ||= [obj, metaquery(blank: true)]
-          queries[:native].last.union(i)
-        end
-      end
-      queries.each do |i, qpack|
-        update_obj, metaq = *qpack
-        if Query === update_obj
-          unless metaq.update update_obj, arg
-            #query may not yet be present on the server
-            metaq.run
-            metaq.update update_obj, arg
-          end
-          next
-        end
-        metaq.results_with_gc.each do |query|
-          if ForeignIndex === i
-            old_id = obj.send "#{i.key_attr}_was"
-            res= query.update old_id, :delete => true if old_id && old_id.to_s != obj.send(i.key_attr).to_s
-          end
-          res= query.update update_obj, arg
-          #puts "Updated #{query} - #{obj.id} - #{res}"
-        end
-      end
-    end
-    alias :add :update
-    def remove(obj, value=nil)
-      update(obj, value, :delete => true)
-    end
-    alias :delete :remove
-  end
-  
   class SearchIndex < Index
     def initialize(arg={})
       super arg
@@ -306,6 +273,7 @@ module Queris
       else
         redis(obj).sadd set_key(value), obj.send(@key)
       end
+      update_live_queries obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{value}, key #{key(value)}')"
     end
     def remove(obj, value = nil)
@@ -314,6 +282,7 @@ module Queris
         redis(obj).srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
         #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name} at #{value},  key #{set_key(val.nil? ? obj.send(@attribute) : val)}')"
       end
+      update_live_queries obj
     end
   end
 
@@ -412,16 +381,19 @@ module Queris
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
       redis(obj).zadd sorted_set_key, my_val, obj.send(@key)
+      update_live_queries obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{val}')"
     end
     
     def increment(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
       redis(obj).zincrby sorted_set_key, my_val, obj.send(@key)
+      update_live_queries obj
     end
 
     def remove(obj, value=nil)
       redis(obj).zrem sorted_set_key, obj.send(@key)
+      update_live_queries obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name}')"
     end
 
