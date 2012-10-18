@@ -287,6 +287,10 @@ module Queris
       ret
     end
 
+    def delta(arg={})
+      myredis = arg[:redis] || redis_master || redis
+      myredis.zrange results_key(:delta), 0, -1
+    end
     def uses_index_as_results_key?
       if ops.length == 1 && sort_ops.empty? && ops.first.operands.length == 1
         first_op = ops.first.operands.first
