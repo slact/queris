@@ -399,6 +399,13 @@ module Queris
           r.setnx results_key, 1 unless pipelined_redis == r
           pipelined_redis.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key] # works as long as we do this after the setnx on master
           extend_ttl r
+          
+          #live query registration
+          if live?
+            all_live_indices.each do |index|
+              index.add_live_query self
+            end
+          end
         end
         debug_info << ["result", pipelined_redis.zcard(results_key)] if debug
       end
@@ -445,11 +452,7 @@ module Queris
       return [] unless live?
       ret = all_indices
       ret.select! do |i|
-        if ForeignIndex === i
-          i.real_index.model.live_index? i
-        else
-          i.model.live_index? i
-        end
+        (ForeignIndex === i ? i.real_index : i).live?
       end
       ret
     end
