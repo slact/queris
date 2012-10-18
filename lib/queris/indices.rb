@@ -434,6 +434,7 @@ module Queris
       arg[:value] = proc{|v,o| Time.now.utc.to_f}
       raise "Expiring Presence index must have its time-to-live (:ttl) set." unless arg[:ttl]
       super arg
+      @attribute = @key #don't care what attribute we use.
     end
     def json_redis_dump(hash={})
       hash[:index]=self.class.name.split('::').last
