@@ -441,11 +441,31 @@ module Queris
       hash[:nocompare]=true
       hash[:ttl]=@ttl
     end
+    def incremental?; false; end
+    def update(obj)
+      add(obj)
+    end
+    def add(*arg)
+      poke(true) if live?
+      super(*arg)
+    end
     def key_for_query(val=nil)
-      key(val)
+      key
+    end
+    def usable_as_results?(val)
+      false #because we always need to run stuff before query
+    end
+    def poke(schedule=false, r=nil)
+      r||=redis
+      if live
+        r.evalsha Queris.script_hash(:update_live_expiring_presence_index), [key, live_queries_key], [Time.now.utc.to_f, @ttl, schedule]
+      else
+        r.zremrangebyscore key, '-inf', Time.now.utc.to_f - @ttl
+      end
+      self
     end
     def before_query_op(redis, results_key, val, op=nil)
-      redis.zremrangebyscore key, '-inf', Time.now.utc.to_f - @ttl
+      poke(false, redis)
     end
     def after_query_op(redis, results_key, val, op=nil)
     end
