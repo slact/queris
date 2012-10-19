@@ -2,8 +2,8 @@ local delta_keyf, exists_keyf = '%s:delta', '%s:exists'
 local index_key, queries_key = KEYS[1], KEYS[2]
 local update_query_keys = redis.call('zrange', queries_key, 0, -1)
 local now, ttl, follow_schedule = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3]
-if follow_schedule then
 local too_old = now - ttl
+if follow_schedule=="true" then
   local schedule_key = queries_key .. ":wait"
   if redis.call('exists', schedule_key) == 1 then
     return 0
