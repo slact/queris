@@ -295,7 +295,7 @@ module Queris
     def create(*a) end
     alias :delete :create
     alias :update :create
-    %w(set_key key skip_create? exists? keys erase!).each do |methname|
+    %w(set_key key key_for_query skip_create? exists? keys erase!).each do |methname|
       define_method methname do |*arg|
         @real_index.send methname, *arg
       end
