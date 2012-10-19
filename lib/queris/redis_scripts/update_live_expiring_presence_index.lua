@@ -3,6 +3,7 @@ local index_key, queries_key = KEYS[1], KEYS[2]
 local update_query_keys = redis.call('zrange', queries_key, 0, -1)
 local now, ttl, follow_schedule = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3]
 if follow_schedule then
+local too_old = now - ttl
   local schedule_key = queries_key .. ":wait"
   if redis.call('exists', schedule_key) == 1 then
     return 0
@@ -13,7 +14,7 @@ end
 local update_keys = {}
 if #update_query_keys == 0 then
   --redis.log(redis.LOG_DEBUG, "no live queries to update for index " .. index_key)
-  return 0
+  return redis.call('zremrangebyscore', index_key, '-inf', too_old)
 else
   --are they all valid? delete the ones that aren't
   local removed = 0
@@ -27,7 +28,6 @@ else
   end
   --redis.log(redis.LOG_DEBUG, ("using %d out of %d query keys"):format(#update_keys, #update_query_keys))
 end
-local too_old = now - ttl
 local res = redis.call('zrangebyscore', index_key, '-inf', too_old)
 if #res > 0 then
   for i, id in ipairs(res) do
