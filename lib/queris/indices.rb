@@ -431,10 +431,11 @@ module Queris
   
   class ExpiringPresenceIndex < RangeIndex
     def initialize(arg={})
-      arg[:value] = proc{|v,o| Time.now.utc.to_f}
       raise "Expiring Presence index must have its time-to-live (:ttl) set." unless arg[:ttl]
+      novalue = !arg.key?(:attribute)
+      arg[:value] = proc{|v,o| Time.now.utc.to_f} if novalue
       super arg
-      @attribute = @key #don't care what attribute we use.
+      @attribute = @key if novalue #don't care what attribute we use.
     end
     def json_redis_dump(hash={})
       hash[:index]=self.class.name.split('::').last
