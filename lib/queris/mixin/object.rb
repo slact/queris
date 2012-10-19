@@ -47,8 +47,6 @@ module Queris
         end
         if opt[:foreign]
           indices = @foreign_redis_indices || []
-        elsif opt[:live]
-          indices = @live_redis_indices || []
         else
           indices = @redis_indices || (superclass.respond_to?(:redis_indices) ? superclass.redis_indices.clone : [])
         end
@@ -58,6 +56,8 @@ module Queris
         elsif opt[:except]
           except = Array === opt[:except] ? opt[:except] : [ opt[:except] ]
           indices.select { |index| !except.member? index.name }
+        elsif opt[:live]
+          indices.select { |index| index.live? }
         elsif !opt[:names].nil?
           names = opt[:names].map{|v| v.to_sym}.to_set
           indices.select { |index| names.member? index.name }
