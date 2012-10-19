@@ -455,8 +455,8 @@ module Queris
     def usable_as_results?(val)
       false #because we always need to run stuff before query
     end
-    def poke(schedule=false, r=nil)
-      r||=redis
+    def poke(schedule=false)
+      r=Queris.redis :master #this index costs a roundtrip to master 
       if live
         r.evalsha Queris.script_hash(:update_live_expiring_presence_index), [key, live_queries_key], [Time.now.utc.to_f, @ttl, schedule]
       else
@@ -465,7 +465,7 @@ module Queris
       self
     end
     def before_query_op(redis, results_key, val, op=nil)
-      poke(false, redis)
+      poke(false) #this is gonna cost me a roundtrip to master
     end
     def after_query_op(redis, results_key, val, op=nil)
     end
