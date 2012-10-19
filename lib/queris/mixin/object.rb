@@ -92,6 +92,8 @@ module Queris
       def info(arg={})
         puts "#{self.name} model info:"
         redis_indices.each do |i|
+          next if arg[:live] && !i.live?
+          next if arg[:class] && !(arg[:class] === i)
           puts "  #{i.info}"
         end
         querykeys = arg[:query_keys] || ((redis || Queris.redis).keys(query.results_key(nil, "*")))
