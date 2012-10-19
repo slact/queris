@@ -464,8 +464,14 @@ module Queris
       end
       self
     end
+    def count
+      redis.zrangebyscore(key, Time.now.utc.to_f - @ttl, 'inf').count
+    end
+    def wait_time
+      Queris.redis.ttl live_queries_key + ":wait"
+    end
     def before_query_op(redis, results_key, val, op=nil)
-      poke(false) #this is gonna cost me a roundtrip to master
+      poke #this is gonna cost me a roundtrip to master
     end
     def after_query_op(redis, results_key, val, op=nil)
     end
