@@ -396,6 +396,7 @@ module Queris
               
           end
         end
+        debug_info << ["results", (trace_member ? pipelined_redis.zscore(temp_results_key, trace_member) : pipelined_redis.zcard(results_key))] if debug
         #puts "QUERY TTL: ttl"
         (redis_master || pipelined_redis).pipelined do |r|
           r.del results_key :delta #just in case it exists
@@ -412,7 +413,6 @@ module Queris
             end
           end
         end
-        debug_info << ["results", (trace_member ? pipelined_redis.zscore(temp_results_key, trace_member) : pipelined_redis.zcard(temp_results_key))] if debug
       end
       @profile.finish :own_time
       set_time_cached Time.now if track_stats?
