@@ -13,7 +13,6 @@ if follow_schedule=="true" then
 end
 local update_keys = {}
 if #update_query_keys == 0 then
-  --redis.log(redis.LOG_DEBUG, "no live queries to update for index " .. index_key)
   return redis.call('zremrangebyscore', index_key, '-inf', too_old)
 else
   --are they all valid? delete the ones that aren't
@@ -26,7 +25,6 @@ else
       removed = removed + 1
     end
   end
-  --redis.log(redis.LOG_DEBUG, ("using %d out of %d query keys"):format(#update_keys, #update_query_keys))
 end
 local res = redis.call('zrangebyscore', index_key, '-inf', too_old)
 if #res > 0 then
@@ -37,5 +35,4 @@ if #res > 0 then
   end
   redis.call('zremrangebyscore', index_key, '-inf', too_old)
 end
---redis.log(redis.LOG_NOTICE, ("updated %d keys for %d queries for index %s"):format(#res, #update_keys, index_key))
 return #res

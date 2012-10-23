@@ -4,7 +4,6 @@ local id = ARGV[1]
 local update_query_keys = redis.call('zrange', live_query_zset, 0, -1)
 local update_keys = {}
 if #update_query_keys == 0 then
-  --redis.log(redis.LOG_VERBOSE, ("no live queries to update found at %s"):format(live_query_zset))
   return 0
 else
   --are they all present? delete the ones that aren't
@@ -20,6 +19,5 @@ else
   for i,key in ipairs(update_keys) do
     redis.call('zadd', key, 0, id)
   end
-  --redis.log(redis.LOG_VERBOSE, ("updated %d out of %d queries found at %s"):format(#update_keys, #update_query_keys, live_query_zset))
   return removed
 end

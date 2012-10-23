@@ -1,16 +1,10 @@
 local log = function(msg, level)
   local loglevel
-  if not level or level == 'debug' then
-    loglevel=redis.LOG_DEBUG
-  elseif level == "verbose" then
-    loglevel=redis.LOG_VERBOSE
-  elseif level == "warning" then
-    loglevel=redis.LOG_WARNING 
-  elseif level == "notice" then
-    loglevel=redis.LOG_NOTICE
-  else
-    loglevel=redis.LOW_DEBUG
-  end
+  if not level or level == 'debug' then loglevel=redis.LOG_DEBUG
+  elseif level == "verbose" then loglevel=redis.LOG_VERBOSE
+  elseif level == "warning" then loglevel=redis.LOG_WARNING 
+  elseif level == "notice" then loglevel=redis.LOG_NOTICE
+  else loglevel=redis.LOW_DEBUG end
   redis.log(loglevel, ("query update: %s"):format(msg))
 end
 
@@ -63,7 +57,7 @@ query_member = function(query, id)
   local revops = query.ops_reverse
   for i, op in ipairs(revops) do
     local member = is_member(op, id)
-    log("OP: " .. op.op .. " member:" .. (member and "true" or "false") .. " id: " .. id .. " indexkey: " .. (op.key or "nokey"), 'debug')
+    --log("OP: " .. op.op .. " member:" .. (member and "true" or "false") .. " id: " .. id .. " indexkey: " .. (op.key or "nokey"), 'debug')
     if op.op == "intersect" then
       if not member then
         return false
@@ -98,16 +92,16 @@ local changed_ids = redis.call('zrange', query.delta_key, 0, -1)
 --log("got " .. #changed_ids .. "delta ids,", "debug")
 for i, id in ipairs(changed_ids) do
   if query_member(query, id) then
-    log( id .. " is a member of query at " .. query.key, "verbose")
+    --log( id .. " is a member of query at " .. query.key, "verbose")
     redis.call('zadd', query.key, score(query.sort_ops, id), id)
     added = added + 1
   else
-    log(id .. " is NOT a member of query at " .. query.key, "verbose")
+    --log(id .. " is NOT a member of query at " .. query.key, "verbose")
     redis.call('zrem', query.key, id)
     removed = removed + 1
   end
 end
 redis.call('del', query.delta_key)
 local status_message = ("added %d, removed %d out of %d for %s"):format(added, removed, #changed_ids, query.key)
-log(status_message, "notice")
+--log(status_message, "notice")
 return status_message
