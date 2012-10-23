@@ -340,7 +340,7 @@ module Queris
       elsif force || !results_exist?
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
-        run_static_query force, opt[:debug], opt[:forced_results_redis]
+        run_static_query force, opt[:debug], opt[:trace_member], opt[:forced_results_redis]
         if !uses_index_as_results_key?
           redis_master.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump)
           #Queris::QueryStore.add(self) if live?
@@ -368,7 +368,7 @@ module Queris
     end
     private :update_results_with_delta_set
 
-    def run_static_query(force=nil, debug=nil, forced_results_redis=nil)
+    def run_static_query(force=nil, debug=nil, trace_member=nil, forced_results_redis=nil)
       @profile.start :time
       # we must use the same redis server everywhere to prevent replication race conditions
       # (query on slave, subquery on master that doesn't finish replicating to slave when the query needs subquery results)
@@ -379,7 +379,7 @@ module Queris
       end
       subq_exist.each do |q, exist|
         next if (Redis::Future === exist ? exist.value : exist)
-        q.run :force => force, :debug => debug
+        q.run :force => force, :debug => debug, :trace_member => trace_member
       end
       
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
@@ -392,7 +392,8 @@ module Queris
         [ops, sort_ops].each do |ops|
           ops.each do |op|
             op.run pipelined_redis, temp_results_key, first_op == op
-            debug_info << [op.to_s, pipelined_redis.zcard(temp_results_key)] if debug
+            debug_info << [op.to_s, (trace_member ? pipelined_redis.zscore(temp_results_key, trace_member) : pipelined_redis.zcard(temp_results_key))] if debug
+              
           end
         end
         #puts "QUERY TTL: ttl"
@@ -411,7 +412,7 @@ module Queris
             end
           end
         end
-        debug_info << ["result", pipelined_redis.zcard(results_key)] if debug
+        debug_info << ["results", (trace_member ? pipelined_redis.zscore(temp_results_key, trace_member) : pipelined_redis.zcard(temp_results_key))] if debug
       end
       @profile.finish :own_time
       set_time_cached Time.now if track_stats?
@@ -421,7 +422,14 @@ module Queris
       unless debug_info.empty?
         #debug_info.map {|line| "#{line.first.symbol} #{line.first.attribute} .#{line[0].value}
         puts "Debugging query #{self}"
-        debug_info.each { |l| puts " #{Redis::Future === l.last ? l.last.value : l.last}   #{l.first}"}
+        debug_info.each do |l| 
+          val = Redis::Future === l.last ? l.last.value : l.last
+          if trace_member
+            puts " #{trace_member}? #{val ? 'yes' : 'no '}   #{l.first}"
+          else
+            puts " #{Redis::Future === l.last ? l.last.value : l.last}   #{l.first}"
+          end
+        end
       end
     end
     private :run_static_query
