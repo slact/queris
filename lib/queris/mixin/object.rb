@@ -134,49 +134,53 @@ module Queris
       end
       def build_redis_indices(indices=nil, build_foreign = true)
         start_time = Time.now
-        print "Loading data for #{name}..."
-        all = self.find_all
-        print "done."
-        fetch_time = Time.now - start_time
-        redis_start_time, printy, total =Time.now, 0, all.count - 1
-        index_keys = []
         indices ||= redis_indices
-        print "\rDeleting existing indices..."
+        foreign_indices = []
         indices.select! do |index|
           if index.skip_create?
             false
+          elsif Queris::ForeignIndex === index
+            foreign_indices << index
+            false
           else
-            index_keys.concat(redis.keys index.key "*", nil, true) #BUG - race condition may prevent all index values from being deleted
             true
           end
         end
-        redis.multi do |redis|
-          index_keys.each { |k| redis.del k }
-          all.each_with_index do |row, i|
-            if printy == i
-              print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
-              printy += (total * 0.05).round
+
+        if indices.count > 0
+          print "Loading data for #{name}..."
+          all = self.find_all
+          print "done."
+          fetch_time = Time.now - start_time
+          redis_start_time, printy, total =Time.now, 0, all.count - 1
+          index_keys = []
+
+          print "\rDeleting existing indices..."
+          indices.each {|index| index_keys.concat(redis.keys index.keypattern)} #BUG - race condition may prevent all index values from being deleted
+          redis.multi do |redis|
+            index_keys.each { |k| redis.del k }
+            all.each_with_index do |row, i|
+              if printy == i
+                print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}%" unless total == 0
+                printy += (total * 0.05).round
+              end
+              row.create_redis_indices indices
             end
-            row.create_redis_indices indices
+            print "\rBuilding redis indices... ok. Committing to redis..."
           end
-          print "\rBuilding redis indices... ok. Committing to redis..."
+          print "\rBuilt #{name} redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
         end
-        print "\rBuilt #{name} redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
         #update all foreign indices
-        foreign = 0
         foreign_by_model={}
         if build_foreign
-          indices.each do |index|
-            if index.kind_of? Queris::ForeignIndex
-              foreign+=1
-              m = index.real_index.model
-              foreign_by_model[m] ||= []
-              foreign_by_model[m] << index.real_index
-            end
+          foreign_indices.each do |index|
+            m = index.real_index.model
+            foreign_by_model[m] ||= []
+            foreign_by_model[m] << index.real_index
           end
           foreign_by_model.each { |model, indices| model.build_redis_indices indices }
         end
-        puts "Built #{indices.count} ind#{indices.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
+        puts "Built #{indices.count} ind#{indices.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign_indices.count : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
         self
       end
       def build_redis_index(index_name)
