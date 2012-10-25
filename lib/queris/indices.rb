@@ -153,6 +153,10 @@ module Queris
     def delete(obj)
       remove(obj, value_was(obj))
     end
+    #remove from all possible index keys, instead of relying on current value. uses KEYS command, is slow.
+    def eliminate(obj)
+      redis.evalsha Queris.script_hash(:remove_from_keyspace), [], [obj.send(@key), keypattern, 480]
+    end
   end
   
   class HashCache < Index
@@ -295,6 +299,7 @@ module Queris
     def create(*a) end
     alias :delete :create
     alias :update :create
+    alias :eliminate :create
     %w(set_key key key_for_query skip_create? exists? keys erase!).each do |methname|
       define_method methname do |*arg|
         @real_index.send methname, *arg
@@ -337,7 +342,6 @@ module Queris
       end
     end
   end
-  
   
   # The power, and occasional awkwardness, of sorted sets
   class RangeIndex < SearchIndex
@@ -399,6 +403,7 @@ module Queris
 
     def before_query_op(redis, results_key, val, op=nil)
       #copy to temp key if needed
+      @before_query.call(redis, results_key, val, op) if @before_query
       unless val.nil?
         rangehack_key = key_for_query val
         redis.zunionstore rangehack_key, [ key ]

@@ -7,7 +7,7 @@ namespace :queris do
       $stdin.readline[0].upcase == "Y"
     end
   end
-  def warn(action, warning=nil, times=1)
+  def warn(action=nil, warning=nil, times=1)
     puts warning if warning
     if action then
       q = "Do you #{times>1 ? 'really ' : ''}want to #{action}?"
@@ -27,29 +27,32 @@ namespace :queris do
       end
     end
   end
-  
-  def build_index(index, check_existence=true)
+
+  def build_index(index, check_existence=true, incremental=false)
     if check_existence
       model = index.model
       print "Checking if index #{index.name} already exists..." 
-      foundkeys = index.respond_to?('key') ? model.redis.keys(index.key('*', nil, true)) : []
+      foundkeys = index.respond_to?('keypattern') ? model.redis.keys(index.keypattern) : []
       if foundkeys.count > 0
         puts "it does."
-        if warn "delete existing data on #{model.name} #{index.name} index"
-          print "Deleting #{foundkeys.count} keys for #{index.name}..."
-          model.redis.multi do  |r|
-            foundkeys.each {|k| r.del k}
-           end
-          puts " done."
+        if incremental
+          puts "#{model.name} #{index.name} index data will be deleted incrementally, per element. This runs safely on live data."
         else
-          return false unless warn "overwrite it then", "Will not delete existing data."
+          puts "All #{model.name} #{index.name} index data will be deleted. Make sure you have a backup!"
+        end
+        return false unless warn
+        if incremental
+          puts "This index spans #{foundkeys.count} redis keys. Every element must be deleted from each of those keys. This may take a while and will slow down redis."
+          if foundkeys.count > 500
+            return false unless warn "continue"
+          end
         end
       else
         puts "it doesn't."
       end
     end
     puts "Building index #{index.name} for #{model.name}"
-    model.build_redis_index index.name
+    model.build_redis_index index.name, incremental
   end
   
   def load_models
@@ -69,11 +72,10 @@ namespace :queris do
   end
 
   desc "Build all missing indices or a given redis index in the given model"
-  task :'build', [:model, :index] => :environment do |t, args|
+  task :'build', [:model, :index, :incremental] => :environment do |t, args|
     load_models
     #abort "Please specify a model." if args.model.nil?
     #abort "Please specify an index." if args.index.nil?
-
     if args.model && args.model.length > 0 then
       begin
         model = Object.const_get args.model
@@ -95,7 +97,7 @@ namespace :queris do
     
     if model and index then
       #just one index to build
-      build_index index
+      build_index index, true, !!args.incremental
     else
       models.each do |model|
         missing = []
@@ -110,9 +112,8 @@ namespace :queris do
         end
       end
     end
-    
   end 
-
+  
   desc "Clear all object caches"
   task :clear_cache => :environment do
     load_models
