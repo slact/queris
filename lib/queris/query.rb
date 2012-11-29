@@ -2,6 +2,7 @@
 require 'json'
 require 'securerandom'
 require "queris/query/operations"
+require "queris/query/trace"
 module Queris
   class Query
     
@@ -25,6 +26,7 @@ module Queris
       @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
       @ttl= arg[:ttl] || 600 #10 minutes default time-to-live
+      @trace=nil
       live! if arg[:live]
       realtime! if arg[:realtime]
       @created_at = Time.now.utc
@@ -330,32 +332,34 @@ module Queris
     def run(opt={})
       raise "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
       @profile.id=self
-      force=opt[:force] || is_stale?
+      force = opt[:force] || is_stale?
+      @trace = opt[:trace] ? Trace.new(self) : false
       model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
+        @trace.message "Using index as results key." if @trace
         set_time_cached Time.now if track_stats?
       elsif force || !results_exist?
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
-        run_static_query force, opt[:debug], opt[:trace_member], opt[:forced_results_redis]
+        run_static_query force, opt[:trace_member]
         if !uses_index_as_results_key?
           redis_master.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump)
           #Queris::QueryStore.add(self) if live?
         end
-      elsif live?
-        update_results_with_delta_set unless opt[:no_update]
       else
-        @profile.record :cache_hit, 1
+        @trace.message "Query results already exist, no trace available. Run query with :force=>true or flush it first to get a trace." if @trace
+        update_results_with_delta_set unless opt[:no_update] if live?
         extend_ttl
+        @profile.record :cache_hit, 1
       end
 
       if @resort #just sort
         #TODO: profile resorts
         redis.multi do |predis|
-           sort_ops.each { |op| op.run predis, results_key }
+          sort_ops.each { |op| op.run predis, results_key }
         end
       end
       self
@@ -364,39 +368,39 @@ module Queris
 
     def update_results_with_delta_set
       redis.evalsha Queris.script_hash(:update_query), [results_key(:marshaled)], [Time.now.utc.to_f]
-      extend_ttl
     end
     private :update_results_with_delta_set
-
-    def run_static_query(force=nil, debug=nil, trace_member=nil, forced_results_redis=nil)
+    
+    def run_static_query(force=nil, trace_member=nil)
       @profile.start :time
       # we must use the same redis server everywhere to prevent replication race conditions
       # (query on slave, subquery on master that doesn't finish replicating to slave when the query needs subquery results)
       # redis cluster should, I suspect, provide the tools to address this in the future.
-      subq_exist ={} 
-      redis.multi do |r|
-        @subqueries.each { |q| subq_exist[q] = q.results_exist? r }
+      
+      #only run nonexistent subqueries, unless tracing
+      subq_exist={}
+      if @trace #check everything when tracing
+        @subqueries.each{|q| subq_exist[q]=false}
+      else
+        redis.multi { |r| @subqueries.each { |q| subq_exist[q] = q.results_exist? r } }
       end
       subq_exist.each do |q, exist|
         next if (Redis::Future === exist ? exist.value : exist)
-        q.run :force => force, :debug => debug, :trace_member => trace_member
+        q.run :force => force, :trace => @trace, :trace_member => trace_member
       end
       
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
       @profile.start :own_time
-      debug_info = []
       temp_results_key = results_key "querying:#{SecureRandom.hex}"
+      trace_callback = @trace ? @trace.method(:op) : nil
       redis.pipelined do |pipelined_redis|
       #pipelined_redis = redis #for debugging
         first_op = ops.first
         [ops, sort_ops].each do |ops|
           ops.each do |op|
-            op.run pipelined_redis, temp_results_key, first_op == op
-            debug_info << [op.to_s, (trace_member ? pipelined_redis.zscore(temp_results_key, trace_member) : pipelined_redis.zcard(temp_results_key))] if debug
-              
+            op.run pipelined_redis, temp_results_key, first_op == op, trace_callback
           end
         end
-        debug_info << ["results", (trace_member ? pipelined_redis.zscore(temp_results_key, trace_member) : pipelined_redis.zcard(results_key))] if debug
         #puts "QUERY TTL: ttl"
         (redis_master || pipelined_redis).pipelined do |r|
           r.del results_key :delta #just in case it exists
@@ -418,21 +422,21 @@ module Queris
       set_time_cached Time.now if track_stats?
       @profile.finish :time
       @profile.save
-
-      unless debug_info.empty?
-        #debug_info.map {|line| "#{line.first.symbol} #{line.first.attribute} .#{line[0].value}
-        puts "Debugging query #{self}"
-        debug_info.each do |l| 
-          val = Redis::Future === l.last ? l.last.value : l.last
-          if trace_member
-            puts " #{trace_member}? #{val ? 'yes' : 'no '}   #{l.first}"
-          else
-            puts " #{Redis::Future === l.last ? l.last.value : l.last}   #{l.first}"
-          end
-        end
-      end
     end
     private :run_static_query
+    
+    def trace(indent=0)
+      buf = "#{"  " * indent}#{indent == 0 ? 'Query' : 'Subquery'} #{self} trace:\r\n"
+      case @trace
+      when nil
+        buf << "#{"  " * indent}No trace available, query hasn't been run yet."
+      when false
+        buf << "#{"  " * indent}No trace available, query was run without :trace parameter. Try query.run(:trace => true)"
+      else
+        buf << @trace.indent(indent).to_s
+      end
+      buf
+    end
     
     def uses_index?(*arg)
       arg.each do |ind|

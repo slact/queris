@@ -12,11 +12,26 @@ module Queris
         def marshal_dump
           [(Query === index ? index.id : index.name).to_sym, value]
         end
-        
+        def key
+          index.key_for_query value
+        end
+        def split
+          if Array === key && Enumerable === value
+            raise "uhoh" if key.length != value.length
+            value.map do |val|
+              self.class.new(index, val)
+            end
+          else
+            [ self ]
+          end
+        end
+        def is_query?
+          Query === @index
+        end
         def json_redis_dump(op_name = nil)
           ret = []
           miniop = {}
-          if Query === @index 
+          if is_query?
             miniop = {query: index.json_redis_dump}
           else
             index.json_redis_dump miniop
@@ -79,7 +94,7 @@ module Queris
         return if @ready
         @keys, @weights = [:result_key], [target_key_weight]
         operands.each do |op|
-          k = block_given? ? yield(op) : op.index.key_for_query(op.value)
+          k = block_given? ? yield(op) : op.key
           num_keys = @keys.length
           if Array === k
             @keys |= k
@@ -93,10 +108,27 @@ module Queris
         end
         @ready = true
       end
-
-      def run(redis, target, first=false)
+      def operand_key(op)
+        op.index.key_for_query op.value
+      end
+      def run(redis, target, first=false, trace_callback=false)
         operands.each { |op| op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op }
-        redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
+        unless trace_callback
+          redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
+        else
+          operands.each do |operand|
+            operand.split.each do |op| #ensure one key per operand
+              keys = [ target, op.key ]
+              weights = [target_key_weight, operand_key_weight(op)]
+              if first
+                keys.shift; weights.shift
+                first = false
+              end
+              redis.send self.class::COMMAND, target, keys, :weights => weights
+              trace_callback.call(self, op, target) if trace_callback
+            end
+          end
+        end
         operands.each { |op| op.index.after_query_op(redis, target, op.value, op) if op.index.respond_to? :after_query_op }
       end
 
@@ -114,6 +146,7 @@ module Queris
         "#{symbol} #{operands.map{|o| Query === o.index ? o.index : "#{o.index.name}<#{o.value}>"}.join(" #{symbol} ")}"
       end
     end
+    
     class UnionOp < Op
       COMMAND = :zunionstore
       SYMBOL = :'∪'
@@ -130,8 +163,8 @@ module Queris
       NAME = :diff
       def target_key_weight; 0; end
       def operand_key_weight(op=nil); :'-inf'; end
-      def run(redis, result_key, first=nil)
-        super redis, result_key, first
+      def run(redis, result_key, *arg)
+        super redis, result_key, *arg
         redis.zremrangebyscore result_key, :'-inf', :'-inf'
         # BUG: sorted sets with -inf scores will be treated incorrectly when diffing
       end
@@ -153,8 +186,16 @@ module Queris
         #don't trigger the rangehack
         super { |op| op.index.key op.value }
       end
-      def run(redis, target, first=false)
-        redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
+      def operand_key(op)
+        op.index.key op.value
+      end
+      def run(redis, target, first=false, trace_callback=nil)
+        sort_keys = keys(target, first)
+        redis.send self.class::COMMAND, target, sort_keys, :weights => weights(first)
+        if trace_callback
+          raise "Can't trace multi-sorts yet." if sort_keys.count > 2 || operands.count > 1
+          trace_callback.call(self, operands.first, target)
+        end
       end
     end
   end
