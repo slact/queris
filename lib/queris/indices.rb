@@ -12,7 +12,7 @@ module Queris
       @attribute ||= @name
       @attribute = @attribute.to_sym unless !@attribute
       @name = @name.to_sym
-      @key ||= :id #object's key attribute (default is 'id')
+      @key ||= :id #object's key attribute (default is 'id') used to generate redis key
       @keyf ||= "%s#{self.class.name.sub(/^.*::/, "")}:#{@name}=%s"
       if block_given?
         yield self, arg
@@ -24,6 +24,8 @@ module Queris
     def key_attr
       @key
     end
+
+    #needed for server-side query storage
     def json_redis_dump(hash={})
       hash
     end
@@ -102,9 +104,11 @@ module Queris
     def handle_range?
       false
     end
+    #processed index value
     def val(value)
       @value.nil? ? value : @value.call(value)
     end
+    #processed indexed value, applied only when indexing objects and never applied to query values
     def index_val(value, obj=nil)
       (@index_value || @value).nil? ? value : (@index_value || @value).call(value, obj)
     end
