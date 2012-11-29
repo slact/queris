@@ -263,6 +263,10 @@ module Queris
       hash
     end
     
+    def run_script(script, redis, keys=[], args=[])
+      redis.evalsha script_hash(script), keys, args
+    end
+    
     def load_lua_script(name, contents)
       redis_scripts[name.to_sym]=contents
     end
