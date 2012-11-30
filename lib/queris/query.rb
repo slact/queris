@@ -674,7 +674,7 @@ module Queris
     end
     
     def count(opt={})
-      run :no_update => !realtime?
+      run(:no_update => !realtime?) unless opt [:no_run]
       key = results_key
       case redis.type(key)
       when 'set'
