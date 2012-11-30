@@ -759,17 +759,19 @@ module Queris
       explain :structure => true
     end
     
-    def info(indent="", output = true)
-      info =  "#{indent}key: #{results_key}\r\n"
-      info << "#{indent}id: #{id}, ttl: #{ttl}, sort: #{sorting_by || "none"}\r\n"
-      info << "#{indent}#{explain}\r\n"
-      if !@subqueries.empty?
-        info << "#{indent}subqueries:\r\n"
+    def info(opt={})
+      ind = opt[:indent] || ""
+      info = "#{ind}#{self} info:\r\n"
+      info <<  "#{ind}key: #{results_key}\r\n" unless opt[:no_key]
+      info << "#{ind}redis key type:#{redis.type key}, size: #{count :no_run => true}\r\n" unless opt[:no_size]
+      info << "#{ind}id: #{id}, ttl: #{ttl}, sort: #{sorting_by || "none"}\r\n" unless opt[:no_details]
+      unless @subqueries.empty? || opt[:no_subqueries]
+        info << "#{ind}subqueries:\r\n"
         @subqueries.each do |sub|
-          info << sub.info(indent + "  ", false)
+          info << sub.info(opt.merge(:indent => ind + "  ", :output=>false))
         end
       end
-      output ? puts(info) : info
+      opt[:output]!=false ? puts(info) : info
     end
     
     def marshal_dump
