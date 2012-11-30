@@ -425,8 +425,11 @@ module Queris
     end
     private :run_static_query
     
-    def trace(indent=0)
-      buf = "#{"  " * indent}#{indent == 0 ? 'Query' : 'Subquery'} #{self} trace:\r\n"
+    def trace(opt={})
+      indent = opt[:indent] || 0
+      buf = "#{"  " * indent}#{indent == 0 ? 'Query' : 'Subquery'} #{self}:\r\n"
+      buf << "#{"  " * indent}ttl:#{ttl}, |#{redis.type(key)} results key|=#{count(:no_run => true)}\r\n"
+      buf << "#{"  " * indent}trace:\r\n"
       case @trace
       when nil
         buf << "#{"  " * indent}No trace available, query hasn't been run yet."
@@ -435,7 +438,7 @@ module Queris
       else
         buf << @trace.indent(indent).to_s
       end
-      buf
+      opt[:output]!=false ? puts(buf) : buf
     end
     
     def uses_index?(*arg)

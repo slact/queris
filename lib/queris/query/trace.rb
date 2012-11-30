@@ -46,7 +46,7 @@ module Queris
           op_info = fval(:operand_type) == 'none' ? "key absent" : "|#{fval :operand_type} key|=#{fval :operand_size}"
           if @operand.is_query?
             "#{indent}#{@op.symbol} subquery<#{@operand.index.id}> (#{op_info}) => #{fval :results_size}\r\n" + 
-            "#{@operand.index.trace(indentation + 1)}"
+            "#{@operand.index.trace(:output => false, :indent => indentation + 1)}"
           else
             "#{indent}#{@op.symbol} #{@operand.index.name}#{@operand.value.nil? ? '' : "<#{@operand.value}>"} (#{op_info}) => #{fval :results_size}"
           end
