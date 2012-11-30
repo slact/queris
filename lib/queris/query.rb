@@ -332,7 +332,10 @@ module Queris
     def run(opt={})
       raise "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
       @profile.id=self
+
       force = opt[:force] || is_stale?
+      force = nil if Numeric === force && force <= 0
+
       @trace = opt[:trace] ? Trace.new(self) : false
       model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
@@ -344,7 +347,7 @@ module Queris
       elsif force || !results_exist?
         #puts "#{self} does not exist or is being forced"
         @profile.record :cache_miss, 1
-        run_static_query force, opt[:trace_member]
+        run_static_query force
         if !uses_index_as_results_key?
           redis_master.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump)
           #Queris::QueryStore.add(self) if live?
@@ -371,7 +374,7 @@ module Queris
     end
     private :update_results_with_delta_set
     
-    def run_static_query(force=nil, trace_member=nil)
+    def run_static_query(force=nil)
       @profile.start :time
       # we must use the same redis server everywhere to prevent replication race conditions
       # (query on slave, subquery on master that doesn't finish replicating to slave when the query needs subquery results)
@@ -386,7 +389,7 @@ module Queris
       end
       subq_exist.each do |q, exist|
         next if (Redis::Future === exist ? exist.value : exist)
-        q.run :force => force, :trace => @trace, :trace_member => trace_member
+        q.run :force => (Numeric === force ? force - 1 : force), :trace => @trace
       end
       
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
