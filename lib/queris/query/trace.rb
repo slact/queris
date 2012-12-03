@@ -50,7 +50,7 @@ module Queris
           }
         end
         def fval(name)
-          val = @futures[name.to_s]
+          val = @futures[name.to_sym]
           super val
         end
         def to_s
