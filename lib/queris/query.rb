@@ -335,8 +335,7 @@ module Queris
 
       force = opt[:force] || is_stale?
       force = nil if Numeric === force && force <= 0
-
-      @trace = opt[:trace] ? Trace.new(self) : false
+      @trace = (opt[:trace] || @must_trace) ? Trace.new(self) : false
       model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
@@ -353,8 +352,11 @@ module Queris
           #Queris::QueryStore.add(self) if live?
         end
       else
+        if live? && !opt[:no_update]
+          live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled)], [Time.now.utc.to_f])
+          @trace.message "Live query update: #{live_update_msg}" if @trace
+        end
         @trace.message "Query results already exist, no trace available. Run query with :force=>true or flush it first to get a trace." if @trace
-        update_results_with_delta_set unless opt[:no_update] if live?
         extend_ttl
         @profile.record :cache_hit, 1
       end
@@ -369,11 +371,6 @@ module Queris
     end
     alias :query :run
 
-    def update_results_with_delta_set
-      redis.evalsha Queris.script_hash(:update_query), [results_key(:marshaled)], [Time.now.utc.to_f]
-    end
-    private :update_results_with_delta_set
-    
     def run_static_query(force=nil)
       @profile.start :time
       # we must use the same redis server everywhere to prevent replication race conditions
@@ -427,7 +424,12 @@ module Queris
       @profile.save
     end
     private :run_static_query
-    
+    def trace!(val=true)
+      @must_trace = val
+    end
+    def trace?
+      @must_trace || @trace
+    end
     def trace(opt={})
       indent = opt[:indent] || 0
       buf = "#{"  " * indent}#{indent == 0 ? 'Query' : 'Subquery'} #{self}:\r\n"
@@ -770,6 +772,11 @@ module Queris
       info = "#{ind}#{self} info:\r\n"
       info <<  "#{ind}key: #{results_key}\r\n" unless opt[:no_key]
       info << "#{ind}redis key type:#{redis.type key}, size: #{count :no_run => true}\r\n" unless opt[:no_size]
+      info << "#{ind}liveliness:#{live? ? (realtime? ? 'realtime' : 'live') : 'static'}"
+      if live?
+        
+      end
+      info << "\r\n"
       info << "#{ind}id: #{id}, ttl: #{ttl}, sort: #{sorting_by || "none"}\r\n" unless opt[:no_details]
       unless @subqueries.empty? || opt[:no_subqueries]
         info << "#{ind}subqueries:\r\n"

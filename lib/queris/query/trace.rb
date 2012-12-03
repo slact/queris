@@ -11,13 +11,20 @@ module Queris
         def indentation
           @indent || 0
         end
+        def fval(val) #future value
+          begin
+            Redis::Future === val ? val.value : val
+          rescue Redis::FutureNotReady => e
+            "unavailable"
+          end
+        end
       end
       class TraceMessage < TraceBase
         def initialize(txt)
           @text=txt
         end
         def to_s
-          "#{indent}#{@text}"
+          "#{indent}#{fval @text}"
         end
       end
       class TraceOp < TraceBase #query operation tracer
@@ -42,6 +49,10 @@ module Queris
             :operand_type => @redis.type(@index_key),
           }
         end
+        def fval(name)
+          val = @futures[name.to_s]
+          super val
+        end
         def to_s
           op_info = fval(:operand_type) == 'none' ? "key absent" : "|#{fval :operand_type} key|=#{fval :operand_size}"
           if @operand.is_query?
@@ -53,14 +64,7 @@ module Queris
         end
         
         private
-        def fval(name) #future value
-          val = @futures[name.to_sym]
-          begin
-            Redis::Future === val ? val.value : val
-          rescue Redis::FutureNotReady => e
-            "unavailable"
-          end
-        end
+        
       end
       
       attr_accessor :buffer

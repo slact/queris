@@ -5,21 +5,21 @@ local log = function(msg, level)
   elseif level == "warning" then loglevel=redis.LOG_WARNING 
   elseif level == "notice" then loglevel=redis.LOG_NOTICE
   else loglevel=redis.LOW_DEBUG end
-  redis.log(loglevel, ("query update: %s"):format(msg))
+  local txt = ("query update: %s"):format(msg)
+  redis.log(loglevel, txt)
+  return txt
 end
 
 local query_marshaled_key= KEYS[1]
 local now = tonumber(ARGV[1])
 local marshaled = redis.call("get", query_marshaled_key)
 if not marshaled then
-  log("Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.", "warning")
-  return false
+  return log("Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.", "warning")
 end
 --log("Fetched marshaled query", "debug")
 local success, query = pcall(cjson.decode, marshaled)
 if not success then
-  log("Error unpacking json-serialized query at " .. query_marshaled_key .. " : " ..   query .. "\r\n " .. marshaled, "warning")
-  return false
+  return log("Error unpacking json-serialized query at " .. query_marshaled_key .. " : " ..   query .. "\r\n " .. marshaled, "warning")
 end
 --log("Unmarshaled query", "debug")
 local query_member
