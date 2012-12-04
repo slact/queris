@@ -778,6 +778,7 @@ module Queris
       end
       info << "\r\n"
       info << "#{ind}id: #{id}, ttl: #{ttl}, sort: #{sorting_by || "none"}\r\n" unless opt[:no_details]
+      info << "#{ind}remaining ttl: results: #{redis.pttl(results_key)}ms, existence flag: #{redis.pttl results_key(:exists)}ms, marshaled: #{redis.pttl results_key(:marshaled)}ms\r\n" if opt[:debug_ttls]
       unless @subqueries.empty? || opt[:no_subqueries]
         info << "#{ind}subqueries:\r\n"
         @subqueries.each do |sub|
