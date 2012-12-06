@@ -308,6 +308,18 @@ module Queris
       true
     end
     
+    #a list of all keys that need to be refreshed (ttl extended) for a query
+    def volatile_keys
+      #first element MUST be the existence flag key
+      #second element MUST be the results key
+      [results_key(:exists), results_key, results_key(:marshaled)]
+    end
+    
+    #all keys related to a query
+    def all_keys
+      all = volatile_keys
+      all << results_key(:delta) if live?
+    end
     #Level Cleared. Time extended!
     def extend_ttl(r=nil, opt={})
       return (redis_master || redis).multi{ |multir| extend_ttl multir } if r.nil?
