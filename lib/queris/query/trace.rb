@@ -11,6 +11,9 @@ module Queris
         def indentation
           @indent || 0
         end
+        def set_options(opt={})
+          @opt=opt
+        end
         def fval(val) #future value
           begin
             Redis::Future === val ? val.value : val
@@ -55,11 +58,12 @@ module Queris
         end
         def to_s
           op_info = fval(:operand_type) == 'none' ? "key absent" : "|#{fval :operand_type} key|=#{fval :operand_size}"
+          op_key = "#{"[#{@index_key}] " if @opt[:keys]}"
           if @operand.is_query?
-            "#{indent}#{@op.symbol} subquery<#{@operand.index.id}> (#{op_info}) => #{fval :results_size}\r\n" + 
-            "#{@operand.index.trace(:output => false, :indent => indentation + 1)}"
+            "#{indent}#{@op.symbol} subquery<#{@operand.index.id}> #{op_key}(#{op_info}) => #{fval :results_size}\r\n" + 
+            "#{@operand.index.trace(@opt.merge(:output => false, :indent => indentation + 1))}"
           else
-            "#{indent}#{@op.symbol} #{@operand.index.name}#{@operand.value.nil? ? '' : "<#{@operand.value}>"} (#{op_info}) => #{fval :results_size}"
+            "#{indent}#{@op.symbol} #{@operand.index.name}#{@operand.value.nil? ? '' : "<#{@operand.value}>"} #{op_key}(#{op_info}) => #{fval :results_size}"
           end
         end
         
@@ -68,10 +72,11 @@ module Queris
       end
       
       attr_accessor :buffer
-      def initialize(query)
+      def initialize(query, opt={})
         @query=query
         @buffer = []
         @indentation = 0
+        @options= Hash === opt ? opt : {}
       end
       def to_s
         out=[]
@@ -87,11 +92,16 @@ module Queris
         self
       end
       def op(*arg)
-        buffer << TraceOp.new(@query.redis, *arg)
+        t = TraceOp.new(@query.redis, *arg)
+        t.set_options @options
+        buffer << t
         self
       end
       def message(text)
-        buffer << TraceMessage.new(text)
+        t = TraceMessage.new(text)
+        t.set_options @options
+        buffer << t
+        self
       end
     end
     

@@ -352,7 +352,7 @@ module Queris
 
       force = opt[:force] || is_stale?
       force = nil if Numeric === force && force <= 0
-      @trace = (opt[:trace] || @must_trace) ? Trace.new(self) : false
+      @trace = (opt[:trace] || @must_trace) ? Trace.new(self, (opt[:trace] || @must_trace)) : false
       model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
         #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
@@ -444,8 +444,14 @@ module Queris
       @profile.save
     end
     private :run_static_query
-    def trace!(val=true)
-      @must_trace = val
+    def trace!(opt={})
+      if opt==false
+        @must_trace = false
+        return self
+      elsif opt
+        @must_trace = opt
+      end
+      
     end
     def trace?
       @must_trace || @trace

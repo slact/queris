@@ -419,7 +419,7 @@ module Queris
       unless val.nil?
         rangehack_key = key_for_query val
         raise "RangeIndex rangehack bug" if key(val) == rangehack_key
-        redis.del key_for_query(val)
+        redis.del rangehack_key
       end
     end
     def distribution_summary
