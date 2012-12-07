@@ -84,6 +84,11 @@ module Queris
       def track_stats!
         @track_stats = true
       end
+      def stats
+        return false unless @track_stats
+        puts RedisStats.summary
+        return RedisStats
+      end
       attr_accessor :log_stats_per_request
       def log_stats_per_request?
         @log_stats_per_request
