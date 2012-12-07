@@ -2,9 +2,9 @@ local log = function(msg, level)
   local loglevel
   if not level or level == 'debug' then loglevel=redis.LOG_DEBUG
   elseif level == "verbose" then loglevel=redis.LOG_VERBOSE
-  elseif level == "warning" then loglevel=redis.LOG_WARNING 
+  elseif level == "warning" then loglevel=redis.LOG_WARNING
   elseif level == "notice" then loglevel=redis.LOG_NOTICE
-  else loglevel=redis.LOW_DEBUG end
+  else loglevel=redis.LOG_DEBUG end
   local txt = ("query update: %s"):format(msg)
   redis.log(loglevel, txt)
   return txt

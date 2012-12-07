@@ -122,7 +122,7 @@ module Queris
         end
         res.first
       end
-      def results_exist?
+      def exists?
         super(redis)
       end
       def set_param_from_index(*arg); self; end
