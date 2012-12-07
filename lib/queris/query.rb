@@ -649,7 +649,7 @@ module Queris
     def member?(id)
       id = id.id if model === id
       run :no_update => !realtime?
-      case redis.type(results_key)
+      case t = redis.type(results_key)
       when 'set'
         redis.sismember(results_key, id)
       when 'zset'
@@ -657,7 +657,7 @@ module Queris
       when 'none'
         false
       else
-        #what happened?
+        raise "unexpected result set type  #{t}"
       end
     end
     alias :contains? :member?
@@ -798,7 +798,7 @@ module Queris
       info << "#{ind}redis key type:#{redis.type key}, size: #{count :no_run => true}\r\n" unless opt[:no_size]
       info << "#{ind}liveliness:#{live? ? (realtime? ? 'realtime' : 'live') : 'static'}"
       if live?
-        
+        #live stuff info
       end
       info << "\r\n"
       info << "#{ind}id: #{id}, ttl: #{ttl}, sort: #{sorting_by || "none"}\r\n" unless opt[:no_details]
