@@ -188,7 +188,7 @@ module Queris
             foreign_by_model[m] ||= []
             foreign_by_model[m] << index.real_index
           end
-          foreign_by_model.each { |model, indices| model.build_redis_indices foreign_indices.map(&:real_index), true, incremental_delete }
+          foreign_by_model.each { |model, indices| model.build_redis_indices indices.map(&:real_index), true, incremental_delete }
         end
         puts "Built #{indices.count} ind#{indices.count == 1 ? "ex" : "ices"} (#{build_foreign ? foreign_indices.count : 'skipped'} foreign) for #{self.name} in #{(Time.now - start_time).round(3)} seconds."
         self
