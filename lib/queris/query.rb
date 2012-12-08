@@ -5,7 +5,7 @@ require "queris/query/operations"
 require "queris/query/trace"
 module Queris
   class Query
-    MINIMUM_QUERY_TTL = 5 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
+    MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :ttl, :created_at, :ops, :sort_ops, :model, :params
     attr_reader :subqueries
     def initialize(model, arg=nil, &block)
