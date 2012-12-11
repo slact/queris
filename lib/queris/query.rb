@@ -330,9 +330,9 @@ module Queris
 
       return true if uses_index_as_results_key?
       #check for existence on master
-      ret = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl]
       r ||= redis
-      if ret &&  redis_master != r
+      ret = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl, redis_master == r]
+      if ret && redis_master != r
         # check if the result set exists on our slave server (if it doesn't it will be a string)
         ret = Queris.run_script :match_key_type, r, [results_key], [:set, :zset]
       end
