@@ -6,8 +6,8 @@ require "queris/query/trace"
 module Queris
   class Query
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
-    attr_accessor :redis_prefix, :ttl, :created_at, :ops, :sort_ops, :model, :params
-    attr_reader :subqueries
+    attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
+    attr_reader :subqueries, :ttl
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
         arg, model = model, model[:model]
@@ -25,7 +25,7 @@ module Queris
       @redis=arg[:redis]
       @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
-      @ttl= arg[:ttl] || 600 #10 minutes default time-to-live
+      self.ttl=arg[:ttl] || 600 #10 minutes default time-to-live
       @trace=nil
       live! if arg[:live]
       realtime! if arg[:realtime]
@@ -119,6 +119,7 @@ module Queris
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
       raise "Recursive subquerying doesn't do anything useful." if index == self
+      validate_ttl(index) if live? && index.live?
       set_param_from_index index, val
 
       #set range and enumerable hack
@@ -264,7 +265,7 @@ module Queris
       @live=false; @realtime=false; self; 
     end
     #live queries have pending updates stored nearby
-    def live!; @live=true; @realtime=false; self; end
+    def live!; @live=true; @realtime=false; validate_ttl; self; end
     #realtime queries are updated automatically, on the spot
     def realtime!
       live!
@@ -273,6 +274,19 @@ module Queris
     def realtime?
       live? && @realtime
     end
+    def ttl=(time_to_live=nil)
+      validate_ttl(nil, time_to_live)
+      @ttl=time_to_live
+    end
+    def validate_ttl(index=nil, time_to_live=nil)
+      time_to_live ||= ttl
+      tooshort = (index ? [ index ] : all_live_indices).select { |i| time_to_live > i.delta_ttl if time_to_live }
+      if tooshort.length > 0
+        raise "Query time-to-live is too long to use live ind#{tooshort.length == 1 ? 'ex' : 'ices'} #{tooshort.map {|i| i.name}.join(', ')}. Shorten query ttl or extend indices' delta_ttl."
+      end
+      ttl
+    end
+    private :validate_ttl
 
     #update query results with object(s)
     def update(obj, arg={})
