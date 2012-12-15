@@ -16,13 +16,10 @@ local now = tonumber(ARGV[1])
 local delta_key, deltas = nil, {}
 local changeset = {}
 --assemble query changeset from live index changeset keys, noting the scores as we go along
-log("|" .. live_index_changesets_key .. "|=" .. redis.call('zcard', live_index_changesets_key))
 for i, v in ipairs(redis.call('zrange', live_index_changesets_key, 0, -1, 'withscores')) do
   if i%2==1 then delta_key=v; else
-    log("rangethrough (" .. v .. ", inf on " .. tostring(delta_key))
     local el, last = nil, v
     local res = redis.call('zrevrangebyscore', delta_key, 'inf', '('..v, 'withscores')
-    log("|" .. delta_key .. "(" .. v .. " .. inf)|=" .. #res/2 .. ", total=" .. redis.call('zcard', delta_key))
     for j, val in ipairs(res) do
       --log("delta " .. j .. " " .. val)
       if j%2==1 then el=val; else
@@ -31,15 +28,13 @@ for i, v in ipairs(redis.call('zrange', live_index_changesets_key, 0, -1, 'withs
         changeset[el]=true
       end
     end
-    log( "done with delta set " .. tostring(delta_key) .. " with last element updated at " .. tostring(last))
     redis.call('zadd', live_index_changesets_key, last, delta_key)
   end
 end
 
 if next(changeset) == nil then
-  return log("nothing changed, no updates to query")
+  return log("nothing changed, no updates to query", "debug")
 end
-log("non-empty changeset pulled from " .. live_index_changesets_key)
 
 local marshaled = redis.call("get", query_marshaled_key)
 if not marshaled then
@@ -120,7 +115,6 @@ for id,_ in pairs(changeset) do
   total = total + 1
   if query_member(query, id) then
     local sc = score(query.sort_ops, id)
-    log("add " .. id .. " with score " .. sc)
     redis.call('zadd', query.key, sc, id)
     added = added + 1
   else
@@ -129,5 +123,5 @@ for id,_ in pairs(changeset) do
   end
 end
 local status_message = ("added %d, removed %d out of %d for %s"):format(added, removed, total, query.key)
-log(status_message, "notice")
+--log(status_message, "debug")
 return status_message
