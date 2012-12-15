@@ -674,7 +674,7 @@ module Queris
     alias :contains? :member?
     
     
-    def result(n)
+    def result(n=0)
       res = results(n...n+1)
       if res.length > 0 
         res.first
