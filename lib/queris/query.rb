@@ -328,6 +328,7 @@ module Queris
       #second element MUST be the results key
       volatile = [results_key(:exists), results_key, results_key(:marshaled)]
       volatile << results_key(:live) if live?
+      volatile
     end
     
     #all keys related to a query
