@@ -328,6 +328,7 @@ module Queris
       #second element MUST be the results key
       volatile = [results_key(:exists), results_key, results_key(:marshaled)]
       volatile << results_key(:live) if live?
+      volatile
     end
     
     #all keys related to a query
@@ -335,30 +336,102 @@ module Queris
       all = volatile_query_keys
     end
     
-    #check for query existence and atomically extend its ttl so that the query keys do not expire while said query is running
-    def ensure_temporary_existence(r=nil, min_ttl=nil)
+    #check for query existence and atomically extend its ttl so that the query keys do not expire while said query is running. useful for wrapping query meat
+    def ensure_existence(force=nil, subquery=nil)
       # redis expires keys ONLY on master, and propagates to slaves by issuing DEL commands.
       # if we don't renew an existing query on master before it is executed, a race condition may arise
       # when a master sends DELetes just after said query is done running on a slave.
-      #there is also the option to extend an existing query ttl to ensure it will not expire in the next min_ttl seconds
-
-      return true if uses_index_as_results_key?
-      #check for existence on master
-      r ||= redis
-      ret = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl, redis_master == r]
-      if ret && redis_master != r
-        # check if the result set exists on our slave server (if it doesn't it will be a string)
-        ret = Queris.run_script :match_key_type, r, [results_key], [:set, :zset]
+      #existing query ttl will be extended to MINIMUM_QUERY_TTL to ensure it will not expire while the query is being prepared or running
+      unless @known_to_exist
+        #puts "ensuring #{subquery ? "subquery" : "query"} #{self.id} exists"
+        return true if uses_index_as_results_key?
+        #check for existence on master
+        
+        @known_to_exist = {}
+        unless subquery
+          redis_master.multi {gather_master_existence_data}
+        else
+          gather_master_existence_data
+        end
+        if redis_master != redis
+          #what's on the slave?
+          @known_to_exist[:query_on_slave] = Queris.run_script :match_key_type, redis, [results_key], [:set, :zset]
+        end
       end
-      ret
+      unless block_given?
+        return @known_to_exist[:query_on_master]
+      end
+      
+      query_exists = existence_ensured?
+      yield force || query_exists
+      
+      #okay, this query is now ready
+      redis_master.multi do |r|
+        r.setex results_key(:exists), ttl, 1
+        r.setnx results_key, 1 unless redis_master == redis
+        r.expire results_key, ttl
+        if live?
+          r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) unless @known_to_exist[:marshaled]
+          unless @known_to_exist[:live]
+            now=Time.now.utc.to_f
+            all_live_indices.each do |i| 
+              r.zadd results_key(:live), now, i.live_delta_key
+            end
+            r.expire results_key(:live), ttl
+          end
+        end
+      end
+      @known_to_exist=nil
+      self
     end
+    
+    def gather_master_existence_data
+      min_ttl = self.class::MINIMUM_QUERY_TTL
+      @known_to_exist[:query_on_master] = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl, redis_master == redis]
+      if live?
+        @known_to_exist[:marshaled] = redis_master.exists results_key(:marshaled)
+        @known_to_exist[:live]= redis_master.exists results_key(:live)
+      end
+    end
+    private :gather_master_existence_data
+    
+    def ensure_subquery_existence(force=nil)
+      #puts "ensuring subquery existence for #{self.id}"
+      redis_master.multi do
+        if redis_master != redis
+          redis.multi { subqueries.each {|sub| sub.ensure_existence(force, true)} }
+        else
+          subqueries.each {|sub| sub.ensure_existence(force, true)}
+        end
+      end
+    end
+    
+    def existence_ensured?
+      if @known_to_exist.nil? || @known_to_exist.empty?
+        return false
+      end
+      @known_to_exist.each do |k,v|
+        begin
+          @known_to_exist[k]=v.value if Redis::Future === v
+        rescue Exception => e
+          return false #not ready yet
+        end
+      end
+      if redis_master == redis
+        res = @known_to_exist[:query_on_master]
+      else
+        res = @known_to_exist[:query_on_slave]
+      end
+      !!res
+    end
+
     
     #check for the existence of a result set. We need to do this in case the result set is empty
     def exists?(r=nil)
       r||=redis
       return true if uses_index_as_results_key?
       raise "No redis connection to check query existence" if r.nil?
-      Queris.run_script :query_exists_locally, (r || redis), [results_key(:exists), results_key]
+      Queris.run_script :query_exists_locally, r, [results_key(:exists), results_key]
     end
     
     def run(opt={})
@@ -367,42 +440,36 @@ module Queris
 
       force = opt[:force] || is_stale?
       force = nil if Numeric === force && force <= 0
+      puts "run query #{self.id} force: #{force || "no"}"
       @trace = (opt[:trace] || @must_trace) ? Trace.new(self, (opt[:trace] || @must_trace)) : false
       model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
-        #puts "QUERY #{@model.name} #{explain} shorted to #{results_key}"
         #do nothing, we're using a results key directly
         @profile.record :cache_hit, 1
         @trace.message "Using index as results key." if @trace
         set_time_cached Time.now if track_stats?
       else
-        if (query_not_found = (opt[:assume_missing] || force || !ensure_temporary_existence)) #see what i did there?
-          #puts "#{self} does not exist or is being forced"
-          @profile.record :cache_miss, 1
-          run_static_query force
-        else
-          if live? && !opt[:no_update]
-            live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
-            @trace.message "Live query update: #{live_update_msg}" if @trace
-          end
-          @trace.message "Query results already exist, no trace available." if @trace
-          @profile.record :cache_hit, 1
-        end
-        #okay, this query is now ready
-        redis_master.multi do |r|
-          r.setex results_key(:exists), ttl, 1
-          r.setnx results_key, 1 unless redis_master == redis
-          r.expire results_key, ttl
-          if query_not_found
-            r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) 
-            if live?
-              now=Time.now.utc.to_f
-              all_live_indices.each do |i| 
-                r.zadd results_key(:live), now, i.live_delta_key
-              end
-              r.expire results_key(:live), ttl
+        ensure_existence do |exists|
+          @profile.start :time
+          if force || !exists
+            @profile.record :cache_miss, 1
+            force_sub = (Numeric === force ? force - 1 : force)
+            ensure_subquery_existence unless force_sub
+            #run missing queries
+            subqueries.each do |sub|
+              sub.run(opt.merge(:trace => @trace, :force => force_sub)) if force || !sub.existence_ensured?
             end
+            run_static_query force
+          else
+            if live? && !opt[:no_update]
+              live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
+              @trace.message "Live query update: #{live_update_msg}" if @trace
+            end
+            @trace.message "Query results already exist, no trace available." if @trace
+            @profile.record :cache_hit, 1
           end
+          @profile.finish :time
+          @profile.save
         end
       end
 
@@ -417,21 +484,7 @@ module Queris
     alias :query :run
 
     def run_static_query(force=nil)
-      @profile.start :time
-      # we must use the same redis server everywhere to prevent replication race conditions
-      # redis cluster should, I suspect, provide the tools to address this in the future.
-      
-      #only run nonexistent subqueries, unless tracing
-      subq_exist={}
-      if @trace #check everything when tracing
-        @subqueries.each{|q| subq_exist[q]=false}
-      else
-        redis.multi { |r| @subqueries.each { |q| subq_exist[q] = q.ensure_temporary_existence(r, self.class::MINIMUM_QUERY_TTL) } }
-      end
-      subq_exist.each do |q, exist|
-        next if (Redis::Future === exist ? exist.value : exist)
-        q.run :force => (Numeric === force ? force - 1 : force), :assume_missing => true, :trace => @trace
-      end
+      puts "running static query #{self.id}, force: #{force || "no"}"
     
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
       @profile.start :own_time
@@ -452,8 +505,6 @@ module Queris
       end
       @profile.finish :own_time
       set_time_cached Time.now if track_stats?
-      @profile.finish :time
-      @profile.save
     end
     private :run_static_query
     def trace!(opt={})
@@ -533,13 +584,12 @@ module Queris
       elsif arg.count>0
         subqueries.each { |sub| flushed += sub.flush arg }
       end
-      if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index?(*arg[:index])) || block_given? && (yield sub)
+      if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index?(*arg[:index])) || block_given? && (yield self)
         #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
         #otherwise, we'd have to create the key first (in a MULTI, of course)
         res = (redis_master || redis).multi do |r|
           r.del all_query_keys
         end
-        #Queris::QueryStore.remove(self) if live? && !uses_index_as_results_key?
         flushed += res.first if res
       end
       flushed
