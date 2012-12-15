@@ -224,23 +224,23 @@ module Queris
     
     def load_cached(marshaled_hash)
       @cached_attr_count ||= (not @attribute.nil?) ? 1 : @model.new.all_cacheable_attributes.length #this line could be a problem if more cacheable attributes are added after the first fetch.
-      begin
-        if marshaled_hash.length >= @cached_attr_count
-          unmarshaled = {}
-          marshaled_hash.each_with_index do |v|
-            unmarshaled[v.first.to_sym]=Marshal.load v.last
-          end
-          obj= @model.new
-          obj.assign_attributes(unmarshaled, :without_protection => true)
-          obj.instance_eval do
-            @new_record= false 
-            @changed_attributes={}
-          end
-          obj
-        else
-          nil
+      if marshaled_hash.length >= @cached_attr_count
+        unmarshaled = {}
+        marshaled_hash.each_with_index do |v|
+          unmarshaled[v.first.to_sym]=Marshal.load v.last
         end
-      rescue ActiveRecord::UnknownAttributeError
+        obj= @model.new
+        begin
+          obj.assign_attributes(unmarshaled, :without_protection => true)
+        rescue Exception => e
+          return nil
+        end
+        obj.instance_eval do
+          @new_record= false 
+          @changed_attributes={}
+        end
+        obj
+      else
         nil
       end
     end

@@ -23,7 +23,6 @@ for i, v in ipairs(redis.call('zrange', live_index_changesets_key, 0, -1, 'withs
     for j, val in ipairs(res) do
       --log("delta " .. j .. " " .. val)
       if j%2==1 then el=val; else
-        log(tostring(el) .. " has changed")
         if val > last then last = val end
         changeset[el]=true
       end
