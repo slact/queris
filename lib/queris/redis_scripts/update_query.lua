@@ -1,27 +1,54 @@
 local log = function(msg, level)
   local loglevel
-  if not level or level == 'debug' then loglevel=redis.LOG_DEBUG
+  if     level == 'debug' then loglevel=redis.LOG_DEBUG
+  elseif level == "notice" then loglevel=redis.LOG_NOTICE
   elseif level == "verbose" then loglevel=redis.LOG_VERBOSE
   elseif level == "warning" then loglevel=redis.LOG_WARNING
-  elseif level == "notice" then loglevel=redis.LOG_NOTICE
-  else loglevel=redis.LOG_DEBUG end
+  else loglevel=redis.LOG_WARNING end
   local txt = ("query update: %s"):format(msg)
   redis.log(loglevel, txt)
   return txt
 end
-
 local query_marshaled_key= KEYS[1]
+local live_index_changesets_key = KEYS[2]
 local now = tonumber(ARGV[1])
+
+local delta_key, deltas = nil, {}
+local changeset = {}
+--assemble query changeset from live index changeset keys, noting the scores as we go along
+log("|" .. live_index_changesets_key .. "|=" .. redis.call('zcard', live_index_changesets_key))
+for i, v in ipairs(redis.call('zrange', live_index_changesets_key, 0, -1, 'withscores')) do
+  if i%2==1 then delta_key=v; else
+    log("rangethrough (" .. v .. ", inf on " .. tostring(delta_key))
+    local el, last = nil, v
+    local res = redis.call('zrevrangebyscore', delta_key, 'inf', '('..v, 'withscores')
+    log("|" .. delta_key .. "(" .. v .. " .. inf)|=" .. #res/2 .. ", total=" .. redis.call('zcard', delta_key))
+    for j, val in ipairs(res) do
+      --log("delta " .. j .. " " .. val)
+      if j%2==1 then el=val; else
+        log(tostring(el) .. " has changed")
+        if val > last then last = val end
+        changeset[el]=true
+      end
+    end
+    log( "done with delta set " .. tostring(delta_key) .. " with last element updated at " .. tostring(last))
+    redis.call('zadd', live_index_changesets_key, last, delta_key)
+  end
+end
+
+if next(changeset) == nil then
+  return log("nothing changed, no updates to query")
+end
+log("non-empty changeset pulled from " .. live_index_changesets_key)
+
 local marshaled = redis.call("get", query_marshaled_key)
 if not marshaled then
   return log("Queris couldn't update query with key " .. query_marshaled_key .. " : redis-friendly marshaled query contents not found.", "warning")
 end
---log("Fetched marshaled query", "debug")
 local success, query = pcall(cjson.decode, marshaled)
 if not success then
   return log("Error unpacking json-serialized query at " .. query_marshaled_key .. " : " ..   query .. "\r\n " .. marshaled, "warning")
 end
---log("Unmarshaled query", "debug")
 local query_member
 local is_member = function(op, id)
   --log("" .. id .. " is_member?", "debug")
@@ -87,21 +114,20 @@ local score = function(ops, id)
   return sum
 end
 
-local added, removed = 0, 0
-local changed_ids = redis.call('zrange', query.delta_key, 0, -1)
---log("got " .. #changed_ids .. "delta ids,", "debug")
-for i, id in ipairs(changed_ids) do
+local total, added, removed = 0, 0, 0
+
+for id,_ in pairs(changeset) do
+  total = total + 1
   if query_member(query, id) then
-    --log( id .. " is a member of query at " .. query.key, "verbose")
-    redis.call('zadd', query.key, score(query.sort_ops, id), id)
+    local sc = score(query.sort_ops, id)
+    log("add " .. id .. " with score " .. sc)
+    redis.call('zadd', query.key, sc, id)
     added = added + 1
   else
-    --log(id .. " is NOT a member of query at " .. query.key, "verbose")
     redis.call('zrem', query.key, id)
     removed = removed + 1
   end
 end
-redis.call('del', query.delta_key)
-local status_message = ("added %d, removed %d out of %d for %s"):format(added, removed, #changed_ids, query.key)
---log(status_message, "notice")
+local status_message = ("added %d, removed %d out of %d for %s"):format(added, removed, total, query.key)
+log(status_message, "notice")
 return status_message

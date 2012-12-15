@@ -129,7 +129,7 @@ module Queris
         val.each { |v| sub_union.union index, v }
         index, val = sub_union, nil
       end
-
+      
       use_index index  #accept string index names and indices and queries
       @results_key = nil
       op = op_class.new
@@ -326,13 +326,13 @@ module Queris
     def volatile_query_keys
       #first element MUST be the existence flag key
       #second element MUST be the results key
-      [results_key(:exists), results_key, results_key(:marshaled)]
+      volatile = [results_key(:exists), results_key, results_key(:marshaled)]
+      volatile << results_key(:live) if live?
     end
     
     #all keys related to a query
     def all_query_keys
       all = volatile_query_keys
-      all << results_key(:delta) if live?
     end
     
     #check for query existence and atomically extend its ttl so that the query keys do not expire while said query is running
@@ -355,6 +355,7 @@ module Queris
     
     #check for the existence of a result set. We need to do this in case the result set is empty
     def exists?(r=nil)
+      r||=redis
       return true if uses_index_as_results_key?
       raise "No redis connection to check query existence" if r.nil?
       Queris.run_script :query_exists_locally, (r || redis), [results_key(:exists), results_key]
@@ -381,7 +382,7 @@ module Queris
           run_static_query force
         else
           if live? && !opt[:no_update]
-            live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled)], [Time.now.utc.to_f])
+            live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
             @trace.message "Live query update: #{live_update_msg}" if @trace
           end
           @trace.message "Query results already exist, no trace available." if @trace
@@ -394,7 +395,13 @@ module Queris
           r.expire results_key, ttl
           if query_not_found
             r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) 
-            r.del results_key(:delta) if live?
+            if live?
+              now=Time.now.utc.to_f
+              all_live_indices.each do |i| 
+                r.zadd results_key(:live), now, i.live_delta_key
+              end
+              r.expire results_key(:live), ttl
+            end
           end
         end
       end
@@ -442,15 +449,6 @@ module Queris
           r.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
           r.setex results_key(:exists), ttl, 1
         end
-        #puts "QUERY TTL: ttl"
-        (redis_master || pipelined_redis).pipelined do |r|
-          #live query registration
-          if live?
-            all_live_indices.each do |index|
-              index.add_live_query self
-            end
-          end
-        end
       end
       @profile.finish :own_time
       set_time_cached Time.now if track_stats?
@@ -461,11 +459,10 @@ module Queris
     def trace!(opt={})
       if opt==false
         @must_trace = false
-        return self
       elsif opt
         @must_trace = opt
       end
-      
+      self
     end
     def trace?
       @must_trace || @trace
@@ -864,7 +861,6 @@ module Queris
       sort_ops.each{|op| sortops.concat(op.json_redis_dump)}
       ret = {
         key: results_key,
-        delta_key: results_key(:delta),
         live: live?,
         realtime: realtime?,
         ops_reverse: queryops,
