@@ -44,7 +44,8 @@ module Queris
     #MAINTENANCE OPERATION -- DO NOT USE IN PRODUCTION CODE
     def keys
       if keypattern
-        (redis || model.redis).keys keypattern
+        mykeys = (redis || model.redis).keys keypattern
+        mykeys << live_delta_key if live
       else
         []
       end
@@ -65,6 +66,12 @@ module Queris
       keycounts = distribution.values
       ret="#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis keys."
       if live?
+        #get delta set size
+        delta_size = (redis || model.redis).zcard live_delta_key
+        ret << " |live delta set|=#{delta_size}"
+        if delta_size > 0
+          last_el = (redis || model.redis).zrevrange(live_delta_key, 0, 0, :with_scores => true).first
+          ret << " updated at: #{last_el.last}"
         end
       end
       ret
@@ -123,12 +130,8 @@ module Queris
     def value_diff(obj)
       obj.attribute_diff @attribute if obj.respond_to? :attribute_diff
     end
-    def live_queries_key
-      @live_queries_key||="#{@redis_prefix||@model.redis_prefix}#{self.class.name.split('::').last}:#{@name}:live_queries"
-    end
-    def add_live_query(query, r=nil)
-      (r||redis).zadd live_queries_key, 0, query.key
-      (r||redis).eval "redis.log(redis.LOG_NOTICE, 'index #{@model.name} #{@name} update: added #{query} live query')"
+    def live_delta_key
+      @live_delta_key||="#{@redis_prefix||@model.redis_prefix}#{self.class.name.split('::').last}:#{@name}:live_delta"
     end
     def no_live_update
       @skip_live_update = true
@@ -136,8 +139,14 @@ module Queris
       @skip_live_update = nil
       ret
     end
-    def update_live_queries(obj, r=nil)
-      (r||redis).evalsha(Queris.script_hash(:update_live_index), [live_queries_key], [obj.send(@key)]) if live? && !@skip_live_update
+    def update_live_delta(obj, r=nil)
+      r ||= redis
+      if live? && !@skip_live_update
+        okey=obj.send @key
+        r.zadd live_delta_key, Time.now.utc.to_f, obj.send(@key)
+        r.expire live_delta_key, @delta_ttl
+        Queris.run_script :periodic_zremrangebyscore, [live_delta_key], [(@delta_ttl/2), '-inf', (Time.now.utc.to_f - @delta_ttl)]
+      end
     end
     def update(obj)
       val_is, val_was = value_is(obj), value_was(obj)
@@ -146,7 +155,7 @@ module Queris
           remove(obj, val_was)
           add(obj)
         end
-        update_live_queries obj
+        update_live_delta obj
       end
     end
     def create(obj)
@@ -279,7 +288,7 @@ module Queris
       else
         redis(obj).sadd set_key(value), obj.send(@key)
       end
-      update_live_queries obj
+      update_live_delta obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{value}, key #{key(value)}')"
     end
     def remove(obj, value = nil)
@@ -288,7 +297,7 @@ module Queris
         redis(obj).srem set_key(val.nil? ? obj.send(@attribute) : val), obj.send(@key)
         #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name} at #{value},  key #{set_key(val.nil? ? obj.send(@attribute) : val)}')"
       end
-      update_live_queries obj
+      update_live_delta obj
     end
   end
 
@@ -302,7 +311,7 @@ module Queris
     alias :delete :create
     alias :update :create
     alias :eliminate :create
-    %w(set_key key key_for_query skip_create? exists? keys erase!).each do |methname|
+    %w(set_key key key_for_query live_delta_key skip_create? exists? keys update_live_delta erase!).each do |methname|
       define_method methname do |*arg|
         @real_index.send methname, *arg
       end
@@ -387,19 +396,19 @@ module Queris
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
       redis(obj).zadd sorted_set_key, my_val, obj.send(@key)
-      update_live_queries obj
+      update_live_delta obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{val}')"
     end
     
     def increment(obj, value=nil)
       my_val = val(value || value_is(obj), obj)
       redis(obj).zincrby sorted_set_key, my_val, obj.send(@key)
-      update_live_queries obj
+      update_live_delta obj
     end
 
     def remove(obj, value=nil)
       redis(obj).zrem sorted_set_key, obj.send(@key)
-      update_live_queries obj
+      update_live_delta obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name}')"
     end
 
@@ -453,6 +462,9 @@ module Queris
     def update(obj)
       add(obj)
     end
+    def update_live_delta(*arg)
+      self
+    end
     def add(*arg)
       poke(true) if live?
       super(*arg)
@@ -465,8 +477,8 @@ module Queris
     end
     def poke(schedule=false)
       r=Queris.redis :master #this index costs a roundtrip to master 
-      if live
-        r.evalsha Queris.script_hash(:update_live_expiring_presence_index), [key, live_queries_key], [Time.now.utc.to_f, @ttl, schedule]
+      if live?
+        r.evalsha Queris.script_hash(:update_live_expiring_presence_index), [key, live_delta_key], [Time.now.utc.to_f, @ttl, schedule]
       else
         r.zremrangebyscore key, '-inf', Time.now.utc.to_f - @ttl
       end
