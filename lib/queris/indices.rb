@@ -318,9 +318,6 @@ module Queris
     def foreign_id(obj)
       obj.send(@key)
     end
-    def method_missing(method)
-      @real_index.method
-    end
   end
   
   class PresenceIndex < SearchIndex
