@@ -119,7 +119,7 @@ module Queris
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
       raise "Recursive subquerying doesn't do anything useful." if index == self
-      validate_ttl(index) if live? && index.live?
+      validate_ttl(index) if Index === index && live? && index.live?
       set_param_from_index index, val
 
       #set range and enumerable hack
