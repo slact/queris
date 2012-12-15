@@ -3,6 +3,7 @@ module Queris
   class Index
     attr_accessor :name, :redis, :model, :attribute, :live
     alias :live? :live
+    DELTA_TTL = 172800 #max time to keep old live query changeset elements around
     def initialize(arg={})
       arg.each do |opt, val|
         instance_variable_set "@#{opt}".to_sym, val
@@ -14,12 +15,17 @@ module Queris
       @name = @name.to_sym
       @key ||= :id #object's key attribute (default is 'id') used to generate redis key
       @keyf ||= "%s#{self.class.name.sub(/^.*::/, "")}:#{@name}=%s"
+      @delta_ttl = (arg[:delta_ttl] || arg[:delta_element_ttl] || arg[:changeset_ttl] || self.class::DELTA_TTL).to_i
+      live_delta_key
       if block_given?
         yield self, arg
       end
       raise ArgumentError, "Index must have a name" unless @name
       raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
+    end
+    def delta_ttl
+      @delta_ttl
     end
     def key_attr
       @key
@@ -59,15 +65,7 @@ module Queris
       keycounts = distribution.values
       ret="#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis keys."
       if live?
-        live_queries=(redis || model.redis).zrange(live_queries_key, 0, -1)
-        queries_exist=(redis || model.redis).multi do |r|
-          live_queries.each do |key|
-            r.exists "#{key}:exists"
-          end
         end
-        num_existing_live_queries = 0
-        queries_exist.each { |val| num_existing_live_queries += 1 if val }
-        ret << " #{live_queries.count} live queries (#{num_existing_live_queries} exist)"
       end
       ret
     end
