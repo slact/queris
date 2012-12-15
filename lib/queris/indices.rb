@@ -46,6 +46,7 @@ module Queris
       if keypattern
         mykeys = (redis || model.redis).keys keypattern
         mykeys << live_delta_key if live
+        mykeys
       else
         []
       end
@@ -144,7 +145,7 @@ module Queris
         okey=obj.send @key
         r.zadd live_delta_key, Time.now.utc.to_f, obj.send(@key)
         r.expire live_delta_key, @delta_ttl
-        Queris.run_script :periodic_zremrangebyscore, [live_delta_key], [(@delta_ttl/2), '-inf', (Time.now.utc.to_f - @delta_ttl)]
+        Queris.run_script :periodic_zremrangebyscore, r, [live_delta_key], [(@delta_ttl/2), '-inf', (Time.now.utc.to_f - @delta_ttl)]
       end
     end
     def update(obj)
@@ -474,7 +475,8 @@ module Queris
     def poke(schedule=false)
       r=Queris.redis :master #this index costs a roundtrip to master 
       if live?
-        r.evalsha Queris.script_hash(:update_live_expiring_presence_index), [key, live_delta_key], [Time.now.utc.to_f, @ttl, schedule]
+        Queris.run_script :update_live_expiring_presence_index, r, [key, live_delta_key], [Time.now.utc.to_f, @ttl, schedule]
+        Queris.run_script :periodic_zremrangebyscore, r, [live_delta_key], [(@delta_ttl/2), '-inf', (Time.now.utc.to_f - @delta_ttl)]
       else
         r.zremrangebyscore key, '-inf', Time.now.utc.to_f - @ttl
       end

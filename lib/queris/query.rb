@@ -119,7 +119,7 @@ module Queris
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
       raise "Recursive subquerying doesn't do anything useful." if index == self
-      validate_ttl(index) if live? && index.live?
+      validate_ttl(index) if Index === index && live? && index.live?
       set_param_from_index index, val
 
       #set range and enumerable hack
@@ -811,7 +811,7 @@ module Queris
       if live?
         #live_keyscores = redis.zrange(results_key(:live), 0, -1, :with_scores => true)
         #info << live_keyscores.map{|i,v| "#{i}:#{v}"}.join(", ")
-        info << "(live indices: #{redis.zcard results_key(:live)})"
+        info << " (live indices: #{redis.zcard results_key(:live)})"
       end
       info << "\r\n"
       info << "#{ind}id: #{id}, ttl: #{ttl}, sort: #{sorting_by || "none"}\r\n" unless opt[:no_details]
