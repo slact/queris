@@ -335,8 +335,8 @@ module Queris
       all = volatile_query_keys
     end
     
-    #check for query existence and atomically extend its ttl so that the query keys do not expire while said query is running
-    def ensure_temporary_existence(r=nil, min_ttl=nil)
+    #check for query existence and atomically extend its ttl so that the query keys do not expire while said query is running. useful for wrapping query meat
+    def ensure_existence(force=nil)
       # redis expires keys ONLY on master, and propagates to slaves by issuing DEL commands.
       # if we don't renew an existing query on master before it is executed, a race condition may arise
       # when a master sends DELetes just after said query is done running on a slave.
@@ -344,14 +344,40 @@ module Queris
 
       return true if uses_index_as_results_key?
       #check for existence on master
-      r ||= redis
-      ret = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl, redis_master == r]
-      if ret && redis_master != r
-        # check if the result set exists on our slave server (if it doesn't it will be a string)
-        ret = Queris.run_script :match_key_type, r, [results_key], [:set, :zset]
+      min_ttl = self.class::MINIMUM_QUERY_TTL
+      in_multi = Redis::Pipeline === redis_master.client #hacky way to check for multi
+      redis_master.multi unless in_multi
+        query_exists = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl, redis_master == redis]
+        if live?
+          marshaled_exists = redis_master.exists results_key(:marshaled)
+          live_exists = redis_master.exists results_key(:live)
+        end
+      redis_master.exec unless in_multi
+      if query_exists && redis_master != redis
+        #there's a placeholder on master. what's on the slave?
+        query_exists = Queris.run_script :match_key_type, r, [results_key], [:set, :zset]
       end
-      ret
+
+      yield query_exists
+
+      #okay, this query is now ready
+      redis_master.multi do |r|
+        r.setex results_key(:exists), ttl, 1
+        r.setnx results_key, 1 unless redis_master == redis
+        r.expire results_key, ttl
+        if live?
+          r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) unless marshaled_exists
+          unless live_exists  
+            now=Time.now.utc.to_f
+            all_live_indices.each do |i| 
+              r.zadd results_key(:live), now, i.live_delta_key
+            end
+            r.expire results_key(:live), ttl
+          end
+        end
+      end
     end
+    private :ensure_existence
     
     #check for the existence of a result set. We need to do this in case the result set is empty
     def exists?(r=nil)
@@ -376,32 +402,18 @@ module Queris
         @trace.message "Using index as results key." if @trace
         set_time_cached Time.now if track_stats?
       else
-        if (query_not_found = (opt[:assume_missing] || force || !ensure_temporary_existence)) #see what i did there?
-          #puts "#{self} does not exist or is being forced"
-          @profile.record :cache_miss, 1
-          run_static_query force
-        else
-          if live? && !opt[:no_update]
-            live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
-            @trace.message "Live query update: #{live_update_msg}" if @trace
-          end
-          @trace.message "Query results already exist, no trace available." if @trace
-          @profile.record :cache_hit, 1
-        end
-        #okay, this query is now ready
-        redis_master.multi do |r|
-          r.setex results_key(:exists), ttl, 1
-          r.setnx results_key, 1 unless redis_master == redis
-          r.expire results_key, ttl
-          if query_not_found
-            r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) 
-            if live?
-              now=Time.now.utc.to_f
-              all_live_indices.each do |i| 
-                r.zadd results_key(:live), now, i.live_delta_key
-              end
-              r.expire results_key(:live), ttl
+        ensure_existence(force) do |exists|
+          unless exists
+            #puts "#{self} does not exist or is being forced"
+            @profile.record :cache_miss, 1
+            run_static_query force
+          else
+            if live? && !opt[:no_update]
+              live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
+              @trace.message "Live query update: #{live_update_msg}" if @trace
             end
+            @trace.message "Query results already exist, no trace available." if @trace
+            @profile.record :cache_hit, 1
           end
         end
       end
@@ -426,7 +438,7 @@ module Queris
       if @trace #check everything when tracing
         @subqueries.each{|q| subq_exist[q]=false}
       else
-        redis.multi { |r| @subqueries.each { |q| subq_exist[q] = q.ensure_temporary_existence(r, self.class::MINIMUM_QUERY_TTL) } }
+        redis.multi { |r| @subqueries.each { |q| subq_exist[q] = q.ensure_existence(r) } }
       end
       subq_exist.each do |q, exist|
         next if (Redis::Future === exist ? exist.value : exist)
