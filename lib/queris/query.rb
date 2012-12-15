@@ -391,7 +391,7 @@ module Queris
         #okay, this query is now ready
         redis_master.multi do |r|
           r.setex results_key(:exists), ttl, 1
-          r.setnx results_key, 1
+          r.setnx results_key, 1 unless redis_master == redis
           r.expire results_key, ttl
           if query_not_found
             r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) 
