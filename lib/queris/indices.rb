@@ -46,6 +46,7 @@ module Queris
       if keypattern
         mykeys = (redis || model.redis).keys keypattern
         mykeys << live_delta_key if live
+        mykeys
       else
         []
       end
