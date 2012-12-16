@@ -5,7 +5,6 @@ if redis.call('exists', oldkey) == 1 then
 else
   --oldkey is empty, so we move that emptiness to newkey
   if redis.call('exists', newkey) == 1 then
-    redis.log(redis.LOG_WARNING, "tried moving key, ended up deleting " .. newkey)
     redis.call('del', newkey) --clear newkey
   end
   return 0
