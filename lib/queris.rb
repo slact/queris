@@ -290,25 +290,45 @@ module Queris
         @roundtrips ||= {}
         @time[redis] = (@time[redis] || 0) + time
         @roundtrips[redis] = (@roundtrips[redis] || 0) + 1
+        if @querying
+          @time_query ||= {}
+          @roundtrips_query ||= {}
+          @time_query[redis] = (@time_query[redis] || 0) + time
+          @roundtrips_query[redis] = (@roundtrips_query[redis] || 0) + 1
+        end
         self
+      end
+      def querying=(val)
+        @querying=val
       end
       def time(redis)
         (@time || {})[redis.client] || 0
       end
+      def query_time(redis)
+        (@time_query || {})[redis.client] || 0
+      end
       def roundtrips(redis)
         (@roundtrips || {})[redis.client] || 0
+      end
+      def query_roundtrips(redis)
+        (@roundtrips_query || {})[redis.client] || 0
       end
       def reset
         (@time || {}).clear
         (@roundtrips || {}).clear
+        (@roundtrips_query || {}).clear
+        (@time_query || {}).clear
         self
       end
       def summary
-        format = "%-20s %-7s %s"
+        format = "%-10s %-7s %-10s %-5s %s"
         ret = Queris.all_redises.map do |r|
-          format % [Queris.redis_role(r) || r.host, time(r).round(3), roundtrips(r)]
+          format % [Queris.redis_role(r) || r.host, time(r).round(3), query_time(r).round(3), roundtrips(r), query_roundtrips(r)]
         end
-        ret.unshift(format % ["Role", "Time", "Roundtrips"]) if ret.count>0
+        if ret.count>0
+          ret.unshift(format % ["", "all", "query", "all", "query"])
+          ret.unshift ("%-12s %-16s %s" % %w(Role Time(s) Roundtrips))
+        end
         ret.empty? ? "no data" : ret.join("\r\n")
       end
       def totals(what=nil)
