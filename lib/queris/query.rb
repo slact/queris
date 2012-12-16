@@ -440,7 +440,7 @@ module Queris
 
       force = opt[:force] || is_stale?
       force = nil if Numeric === force && force <= 0
-      puts "run query #{self.id} force: #{force || "no"}"
+      #puts "run query #{self.id} force: #{force || "no"}"
       @trace = (opt[:trace] || @must_trace) ? Trace.new(self, (opt[:trace] || @must_trace)) : false
       model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
@@ -484,7 +484,7 @@ module Queris
     alias :query :run
 
     def run_static_query(force=nil)
-      puts "running static query #{self.id}, force: #{force || "no"}"
+      #puts "running static query #{self.id}, force: #{force || "no"}"
     
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
       @profile.start :own_time
