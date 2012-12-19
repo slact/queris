@@ -216,7 +216,12 @@ module Queris
     def fetch(id, opt={})
       if @attribute.nil?
         hash = (opt[:redis] || Queris.redis(:slave, :master)).hgetall hash_key id
-        load_cached hash
+
+        loaded = load_cached hash
+        if hash && loaded.nil? #cache data invalid. delete.
+          Queris.redis(:master).del(hash_key id)
+        end
+        loaded
       else
         return (opt[:redis] || Queris.redis(:slave, :master)).hget hash_key(id), @attribute
       end
@@ -233,6 +238,7 @@ module Queris
         begin
           obj.assign_attributes(unmarshaled, :without_protection => true)
         rescue Exception => e
+          #cache load failed because the data was invalid.
           return nil
         end
         obj.instance_eval do
