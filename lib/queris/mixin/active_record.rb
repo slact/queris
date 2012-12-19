@@ -31,7 +31,7 @@ module Queris
       end
       def find_cached(id, opt={})
         @hashcache ||= stored_in_redis?
-        if (obj = @hashcache.fetch(id, opt))
+        if (!opt[:assume_missing] && (obj = @hashcache.fetch(id, opt)))
           return obj
         elsif !opt[:nofallback]
           begin
