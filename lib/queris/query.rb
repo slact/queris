@@ -656,28 +656,21 @@ module Queris
         raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first || 0, last || -1, @from_hash, limit, offset])
         res, to_be_deleted = [], []
         raw_res.each_with_index do |raw_hash, i|
+          my_id = ids[i]
           if failed_i.first == i
             failed_i.shift
-            if @restore_failed_callback
-              obj = @restore_failed_callback.call raw_hash, self
-            else
-              obj = model.find_cached raw_hash
-            end
+            obj = model.find_cached my_id, :assume_missing => true
           else
             hash = Hash[*raw_hash] if Array === raw_hash
-            unless (obj = model.restore(hash, ids[i]))
+            unless (obj = model.restore(hash, my_id))
               #we could stil have received an invalid cache object (too few attributes, for example)
-              if @restore_failed_callback
-                obj = @restore_failed_callback.call ids[i], self
-              else
-                obj = model.find_cached ids[i]
-              end
+              obj = model.find_cached my_id, :assume_missing => true
             end
           end
           if not obj.nil?
             res << obj
           elsif @delete_missing
-            to_be_deleted << ids[i]
+            to_be_deleted << my_id
           end
         end
         redis.evalsha Queris.script_hash(:remove_from_sets), all_index_keys, to_be_deleted unless to_be_deleted.empty?
