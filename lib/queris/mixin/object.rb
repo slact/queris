@@ -328,8 +328,10 @@ module Queris
     
     %w(create update delete eliminate).each do |op|
       define_method "#{op}_redis_indices" do |indices=nil, redis=nil|
-        (indices || self.class.redis_indices).each do |index|
-          index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+        Queris.redis.multi do #hacky, might bug out on weird configs
+          (indices || self.class.redis_indices).each do |index|
+            index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
+          end
         end
       end
     end
