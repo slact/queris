@@ -47,7 +47,10 @@ module Queris
         unless (@hashcache ||= stored_in_redis?)
           raise "Can't restore ActiveRecord model from hash -- there isn't a HashCache index present. (Don't forget to use cache_all_attributes on the model)"
         end
-        @hashcache.load_cached hash
+        unless (restored = @hashcache.load_cached hash)
+          restored = find_cached id if id
+        end
+        restored
       end
       
     end
