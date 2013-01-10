@@ -156,29 +156,31 @@ module Queris
 
           print "\rDeleting existing indices..." unless incremental_delete
           indices.each {|index| index_keys.concat(redis.keys index.keypattern)} #BUG - race condition may prevent all index values from being deleted
-          unless incremental_delete
-            redis.multi 
-            index_keys.each { |k| redis.del k }
-          end
-          next_print, last_i, gap=Time.now, 0, 2
-          all.each_with_index do |row, i|
-            now = Time.now
-            if next_print <= now
-              rate = (i - last_i)/(now.to_f - (next_print-gap).to_f)
-              last_i=i
-              print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}% (#{i}/#{all.count}) (#{rate.round}/sec)" unless total == 0
-              next_print = now + gap
+          no_indexing_pipeline do #prevent create_redis_index from running in its own personal multi
+            unless incremental_delete
+              redis.multi 
+              index_keys.each { |k| redis.del k }
             end
-            if incremental_delete
-              redis.multi
-              row.eliminate_redis_indices indices
+            next_print, last_i, gap=Time.now, 0, 2
+            all.each_with_index do |row, i|
+              now = Time.now
+              if next_print <= now
+                rate = (i - last_i)/(now.to_f - (next_print-gap).to_f)
+                last_i=i
+                print "\rBuilding redis indices... #{((i.to_f/total) * 100).round.to_i}% (#{i}/#{all.count}) (#{rate.round}/sec)" unless total == 0
+                next_print = now + gap
+              end
+              if incremental_delete
+                redis.multi
+                row.eliminate_redis_indices indices
+              end
+              row.create_redis_indices indices
+              redis.exec if incremental_delete
             end
-            row.create_redis_indices indices
-            redis.exec if incremental_delete
+            print "\rBuilding redis indices... ok. Committing to redis..."
+            redis.exec unless incremental_delete
+            print "\rBuilt #{name} redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
           end
-          print "\rBuilding redis indices... ok. Committing to redis..."
-          redis.exec unless incremental_delete
-          print "\rBuilt #{name} redis indices for #{total} rows in #{(Time.now - redis_start_time).round 3} sec. (#{fetch_time.round 3} sec. to fetch all data).\r\n"
         end
         #update all foreign indices
         foreign_by_model={}
@@ -205,6 +207,7 @@ module Queris
         @before_query_flush_callbacks ||= []
         @before_query_flush_callbacks << block
       end
+      
       def run_query_callbacks(which_ones, query)
         callbacks = case which_ones
         when :before, :before_run, :run
@@ -236,6 +239,18 @@ module Queris
       def live_queries?
         @live_redis_indices && @live_redis_indices.count
       end
+      
+      def no_indexing_pipeline
+        if block_given?
+          @no_indexing_pipeline = true
+          res = yield
+          @no_indexing_pipeline = nil
+          return res
+        else
+          @no_indexing_pipeline
+        end
+      end
+      
       private
       def redis_index_hash
         @redis_index_hash ||= superclass.respond_to?(:redis_index_hash) ? superclass.redis_index_hash.clone : {}
@@ -313,6 +328,7 @@ module Queris
         arg[:index]=Queris::HashCache
         index_attribute_from arg
       end
+      
     end
 
     def get_cached_attribute(attr_name)
@@ -328,7 +344,7 @@ module Queris
     
     %w(create update delete eliminate).each do |op|
       define_method "#{op}_redis_indices" do |indices=nil, redis=nil|
-        if Redis::Pipeline === Queris.redis.client
+        if self.class.no_indexing_pipeline ||  Redis::Pipeline === Queris.redis.client 
           (indices || self.class.redis_indices).each do |index|
             index.send op, self unless index.respond_to?("skip_#{op}?") and index.send("skip_#{op}?")
           end
