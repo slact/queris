@@ -1,7 +1,7 @@
 require "securerandom"
 module Queris
   class Index
-    attr_accessor :name, :redis, :model, :attribute, :live
+    attr_accessor :name, :redis, :model, :attribute, :live, :delta_ttl
     alias :live? :live
     DELTA_TTL = 172800 #max time to keep old live query changeset elements around
     def initialize(arg={})
@@ -23,9 +23,6 @@ module Queris
       raise ArgumentError, "Index must have a name" unless @name
       raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
-    end
-    def delta_ttl
-      @delta_ttl
     end
     def key_attr
       @key
