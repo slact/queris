@@ -1,7 +1,14 @@
 require "securerandom"
 module Queris
+  # These here are various queries 'indices'. All indices must subclass 
+  # Queris::Index. Some are straight-up indices, mapping values 
+  # (hashed when possible) to object ids.
+  # others perform caching functions, yet others maintain some state 
+  # (and cannot be rebuilt)
+  
   class Index
     attr_accessor :name, :redis, :model, :attribute, :live, :delta_ttl
+    #live queries is implemented through a time-indexed sorted set of changed objects as they relate to a given live index.
     alias :live? :live
     DELTA_TTL = 172800 #max time to keep old live query changeset elements around
     def initialize(arg={})
@@ -9,8 +16,8 @@ module Queris
         instance_variable_set "@#{opt}".to_sym, val
       end
       @redis = arg[:redis]
-      @name ||= @attribute
-      @attribute ||= @name
+      @name ||= @attribute #user-facing index name
+      @attribute ||= @name #attribute or method, as long as it exists
       @attribute = @attribute.to_sym unless !@attribute
       @name = @name.to_sym
       @key ||= :id #object's key attribute (default is 'id') used to generate redis key
@@ -24,7 +31,7 @@ module Queris
       raise ArgumentError, "Index must have a model" unless @model
       @model.add_redis_index self
     end
-    def key_attr
+    def key_attr #object's key (usually 'id')
       @key
     end
 
@@ -39,6 +46,7 @@ module Queris
     end
 
     #MAINTENANCE OPERATION -- DO NOT USE IN PRODUCTION CODE
+    #get all keys associated with an index
     def keys
       if keypattern
         mykeys = (redis || model.redis).keys keypattern
@@ -51,6 +59,7 @@ module Queris
     def keypattern
       @keypattern ||= key('*', nil, true) if respond_to? :key
     end
+    #info about data distribution in an index
     def distribution
       k = keys
       counts = (redis || model.redis).multi do |r|
@@ -93,6 +102,7 @@ module Queris
     def skip_delete?
       @skip_delete
     end
+    #is it possible to update this index incrementally?
     def incremental?
       false
     end
@@ -168,8 +178,8 @@ module Queris
   end
   
   class HashCache < Index
+    #maintains a cached copy of an object with separetely marshaled attributes in redis
     def initialize(arg={})
-      
       @name= "#{arg[:attribute] || "all_attribute"}_hashcache"
       super arg
       @attribute= arg[:attribute]
@@ -267,6 +277,7 @@ module Queris
   end
 
   class SearchIndex < Index
+    #basic set index
     def initialize(arg={})
       super arg
       @type ||= "string"
@@ -305,6 +316,9 @@ module Queris
   end
 
   class ForeignIndex < SearchIndex
+    #this foreign index wrapper has caused some problems in the past.
+    #it's annoying to work with and should be retired in favor of a transparent
+    #foreign index proxy object
     attr_accessor :real_index
     def initialize(arg)
       raise ArgumentError, "Missing required initialization attribute real_index for ForeignIndex." unless arg[:real_index]
@@ -411,7 +425,9 @@ module Queris
       update_live_delta obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name}')"
     end
-
+    
+    #there's no Z(UNION|INTER)STORE with range, so we need to extract the desired range
+    #to a temporary zset first
     def before_query_op(redis, results_key, val, op=nil)
       #copy to temp key if needed
       @before_query.call(redis, results_key, val, op) if @before_query
@@ -422,6 +438,7 @@ module Queris
         remove_inverse_range redis, rangehack_key, val
       end
     end
+    #clean up temporary ranged zset
     def after_query_op(redis, results_key, val, op=nil)
       unless val.nil?
         rangehack_key = key_for_query val
