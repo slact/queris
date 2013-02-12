@@ -509,6 +509,13 @@ module Queris
       set_time_cached Time.now if track_stats?
     end
     private :run_static_query
+    
+    def all_subqueries
+      ret = subqueries.dup
+      subqueries.each { |sub| ret.concat sub.all_subqueries }
+      ret
+    end
+    
     def trace!(opt={})
       if opt==false
         @must_trace = false
