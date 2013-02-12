@@ -27,7 +27,7 @@ end
 
 You can now query Users:
 ```ruby
-youg_bob_and_steve = User.query.intersect(:name, ["Steve", "Bob"]).intersect(:age, 0..30).diff(:email, "steve@example.org")
+young_bob_and_steve = User.query.union(:name, ["Steve", "Bob"]).intersect(:age, 0..30).diff(:email, "steve@example.org")
 #you can have subqueries, too:
 bob_and_steve_and_bill = User.query.union(young_bob_and_steve).union(:name, "Bill")
 #now get the results
