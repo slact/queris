@@ -489,24 +489,44 @@ module Queris
       #puts "running static query #{self.id}, force: #{force || "no"}"
     
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
-      @profile.start :own_time
-      temp_results_key = results_key "querying:#{SecureRandom.hex}"
-      trace_callback = @trace ? @trace.method(:op) : nil
-      redis.pipelined do |pipelined_redis|
-      #pipelined_redis = redis #for debugging
-        first_op = ops.first
-        [ops, sort_ops].each do |ops|
-          ops.each do |op|
-            op.run pipelined_redis, temp_results_key, first_op == op, trace_callback
+      begin
+        @profile.start :own_time
+        temp_results_key = results_key "querying:#{SecureRandom.hex}"
+        trace_callback = @trace ? @trace.method(:op) : nil
+        redis.pipelined do |pipelined_redis|
+        #pipelined_redis = redis #for debugging
+          first_op = ops.first
+          [ops, sort_ops].each do |ops|
+            ops.each do |op|
+              op.run pipelined_redis, temp_results_key, first_op == op, trace_callback
+            end
+          end
+          pipelined_redis.multi do |r|
+            r.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
+            r.setex results_key(:exists), ttl, 1
           end
         end
-        pipelined_redis.multi do |r|
-          r.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
-          r.setex results_key(:exists), ttl, 1
+        @profile.finish :own_time
+        set_time_cached Time.now if track_stats?
+      rescue Redis::CommandError => e
+        debug={}
+        debug[self]=redis.type results_key
+        debug[temp_results_key]=redis.type temp_results_key
+        all_subqueries.each do |sub|
+          debug[sub]=redis.type results_key
         end
+        msg = [e.to_s]
+        debug.each do |k,v|
+          unless %w(set zset none).member?(v)
+            if Query === k
+              msg << "#{k} #{k.key} (#{v})"
+            else
+              msg << "#{k} (#{v})"
+            end
+          end
+        end
+        raise RedisError, msg.join("; ")
       end
-      @profile.finish :own_time
-      set_time_cached Time.now if track_stats?
     end
     private :run_static_query
     
