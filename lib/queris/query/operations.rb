@@ -17,7 +17,7 @@ module Queris
         end
         def split
           if Array === key && Enumerable === value
-            raise "uhoh" if key.length != value.length
+            raise ClientError, "Sanity check failed - different number of keys and values, bailing." if key.length != value.length
             value.map do |val|
               self.class.new(index, val)
             end
@@ -193,7 +193,7 @@ module Queris
         sort_keys = keys(target, first)
         redis.send self.class::COMMAND, target, sort_keys, :weights => weights(first)
         if trace_callback
-          raise "Can't trace multi-sorts yet." if sort_keys.count > 2 || operands.count > 1
+          raise NotImplemented, "Can't trace multi-sorts yet." if sort_keys.count > 2 || operands.count > 1
           trace_callback.call(self, operands.first, target)
         end
       end

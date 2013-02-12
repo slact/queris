@@ -37,8 +37,7 @@ module Queris
           @operand=operand
           @results_key=results_key
           if Array === @operand.key
-            binding.pry
-            raise "Only single-key operands can be traced." 
+            raise NotImplemented, "Only single-key operands can be traced." 
           end
           prepare
         end

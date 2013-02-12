@@ -14,8 +14,8 @@ module Queris
       elsif arg.nil?
         arg= {}
       end
-      raise "Can't create query without a model" unless model
-      raise "include Queris in your model (#{model.inspect})." unless model.include? Queris
+      raise ArgumentError, "Can't create query without a model" unless model
+      raise Error, "include Queris in your model (#{model.inspect})." unless model.include? Queris
       @model = model
       @params = {}
       @ops = []
@@ -31,8 +31,8 @@ module Queris
       realtime! if arg[:realtime]
       @created_at = Time.now.utc
       if @expire_after = (arg[:expire_at] || arg[:expire] || arg[:expire_after])
-        raise "Can't create query with expire_at option and check_staleness options at once" if arg[:check_staleness]
-        raise "Can't create query with expire_at option with track_stats disabled" if arg[:track_stats]==false
+        raise ArgumentError, "Can't create query with expire_at option and check_staleness options at once" if arg[:check_staleness]
+        raise ArgumentError, "Can't create query with expire_at option with track_stats disabled" if arg[:track_stats]==false
         arg[:track_stats]=true
         arg[:check_staleness] = Proc.new do |query|
           query.time_cached < (@expire_after || Time.at(0))
@@ -67,7 +67,7 @@ module Queris
     end
 
     def stats
-      raise "Query isn't profiled, no stats available" if @profile.nil?
+      raise Error, "Query isn't profiled, no stats available" if @profile.nil?
       @profile.load
     end
     
@@ -118,7 +118,7 @@ module Queris
 
     def prepare_op(op_class, index, val)
       index = @model.redis_index index
-      raise "Recursive subquerying doesn't do anything useful." if index == self
+      raise Error, "Recursive subquerying doesn't do anything useful." if index == self
       validate_ttl(index) if Index === index && live? && index.live?
       set_param_from_index index, val
 
@@ -149,7 +149,7 @@ module Queris
       return self if num_operations == 0 || ops.empty?
       @results_key = nil
       op = ops.last
-      raise "Unexpected operand-less query operation" unless (last_operand = op.operands.last)
+      raise ClientError, "Unexpected operand-less query operation" unless (last_operand = op.operands.last)
       if Query === (sub = last_operand.index)
         subqueries.delete sub
       end
@@ -282,7 +282,7 @@ module Queris
       time_to_live ||= ttl
       tooshort = (index ? [ index ] : all_live_indices).select { |i| time_to_live > i.delta_ttl if time_to_live }
       if tooshort.length > 0
-        raise "Query time-to-live is too long to use live ind#{tooshort.length == 1 ? 'ex' : 'ices'} #{tooshort.map {|i| i.name}.join(', ')}. Shorten query ttl or extend indices' delta_ttl."
+        raise Error, "Query time-to-live is too long to use live ind#{tooshort.length == 1 ? 'ex' : 'ices'} #{tooshort.map {|i| i.name}.join(', ')}. Shorten query ttl or extend indices' delta_ttl."
       end
       ttl
     end
@@ -430,12 +430,12 @@ module Queris
     def exists?(r=nil)
       r||=redis
       return true if uses_index_as_results_key?
-      raise "No redis connection to check query existence" if r.nil?
+      raise ClientError, "No redis connection to check query existence" if r.nil?
       Queris.run_script :query_exists_locally, r, [results_key(:exists), results_key]
     end
     
     def run(opt={})
-      raise "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
+      raise ClientError, "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
       @profile.id=self
 
       force = opt[:force] || is_stale?
@@ -618,21 +618,21 @@ module Queris
       key = results_key
       case (keytype=redis.type(key))
       when 'set'
-        raise "Can't range by score on a regular results set" if opt[:score]
-        raise "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." if opt[:range]
+        raise Error, "Can't range by score on a regular results set" if opt[:score]
+        raise NotImplemented, "Cannot get result range from shortcut index result set (not sorted); must retrieve all results. This is a temporary queris limitation." if opt[:range]
         cmd, first, last, rangeopt = :smembers, nil, nil, {}
       when 'zset'
         rangeopt = {}
         rangeopt[:with_scores] = true if opt[:with_scores]
         if (r = opt[:range])
           first, last = r.begin, r.end - (r.exclude_end? ? 1 : 0)
-          raise "Query result range must have numbers, instead there's a #{first.class} and #{last.class}" unless Numeric === first && Numeric === last
-          raise "Query results range must have whole-number endpoints" unless first.round == first && last.round == last
+          raise ArgumentError, "Query result range must have numbers, instead there's a #{first.class} and #{last.class}" unless Numeric === first && Numeric === last
+          raise ArgumentError, "Query results range must have integer endpoints" unless first.round == first && last.round == last
         end
         if (scrange = opt[:score])
           rangeopt[:limit] = [ first, last - first ] if opt[:range]
-          raise "Can't fetch results with_scores when also limiting them by score. Pick one or the other." if opt[:with_scores]
-          raise "query.results :score parameter must be a Range" unless Range === scrange
+          raise NotImplemented, "Can't fetch results with_scores when also limiting them by score. Pick one or the other." if opt[:with_scores]
+          raise ArgumentError, "Query.results :score parameter must be a Range" unless Range === scrange
           first = Queris::to_redis_float(scrange.begin * sort_mult)
           last = Queris::to_redis_float(scrange.end * sort_mult)
           last = "(#{last}" if scrange.exclude_end?
@@ -713,7 +713,7 @@ module Queris
       when 'none'
         false
       else
-        raise "unexpected result set type  #{t}"
+        raise ClientError, "unexpected result set type #{t}"
       end
     end
     alias :contains? :member?
@@ -766,12 +766,12 @@ module Queris
       key = results_key
       case redis.type(key)
       when 'set'
-        raise "Query results are not a sorted set (maybe using a set index directly), can't range" if opt[:score]
+        raise Error, "Query results are not a sorted set (maybe using a set index directly), can't range" if opt[:score]
         redis.scard key
       when 'zset'
         if opt[:score]
           range = opt[:score]
-          raise "'score' option must be a Range, but it's a #{range.class} instead" unless Range === range
+          raise ArgumentError, ":score option must be a Range, but it's a #{range.class} instead" unless Range === range
           first = range.begin * sort_mult
           last = range.exclude_end? ? "(#{range.end.to_f * sort_mult}" : range.end.to_f * sort_mult
           first, last = last, first if sort_mult == -1

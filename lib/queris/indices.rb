@@ -41,7 +41,7 @@ module Queris
     end
     def redis(obj=nil)
       r=@redis || @model.redis || Queris.redis(:index, :slave, :master) || (!obj.nil? && obj.redis)
-      raise "No redis connection found for Queris Index #{name}" unless r
+      raise ClientError, "No redis connection found for Queris Index #{name}" unless r
       r
     end
 
@@ -183,7 +183,7 @@ module Queris
       @name= "#{arg[:attribute] || "all_attribute"}_hashcache"
       super arg
       @attribute= arg[:attribute]
-      raise Exception, "Model not passed to index." unless @model
+      raise ClientError, "Model not passed to index." unless @model
       @name=@model.to_s #whatever, name's not important.
     end
     
@@ -281,7 +281,7 @@ module Queris
     def initialize(arg={})
       super arg
       @type ||= "string"
-      raise Exception, "Model not passed to index." unless @model
+      raise ClientError, "Model not passed to index." unless @model
     end
     
     def set_key(value, prefix=nil, raw_val=false)
@@ -442,7 +442,7 @@ module Queris
     def after_query_op(redis, results_key, val, op=nil)
       unless val.nil?
         rangehack_key = key_for_query val
-        raise "RangeIndex rangehack bug" if key(val) == rangehack_key
+        raise ClientError, "RangeIndex rangehack bug. Inform Queris maintainers." if key(val) == rangehack_key
         redis.del rangehack_key
       end
     end
@@ -464,7 +464,7 @@ module Queris
   
   class ExpiringPresenceIndex < RangeIndex
     def initialize(arg={})
-      raise "Expiring Presence index must have its time-to-live (:ttl) set." unless arg[:ttl]
+      raise ArgumentError, "Expiring Presence index must have its time-to-live (:ttl) set." unless arg[:ttl]
       novalue = !arg.key?(:attribute)
       arg[:value] = proc{|v,o| Time.now.utc.to_f} if novalue
       super arg

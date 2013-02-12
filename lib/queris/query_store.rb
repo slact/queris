@@ -23,7 +23,7 @@ module Queris
         else
           r= Queris.redis :'metaquery:slave', :metaquery
         end
-        raise "No appropriate redis connection found for QueryStore. Add a queris connection with the metaquery role (Queris.add_redis(r, :metaquery), or add live_queries to desired models." unless r
+        raise Error, "No appropriate redis connection found for QueryStore. Add a queris connection with the metaquery role (Queris.add_redis(r, :metaquery), or add live_queries to desired models." unless r
         r
       end
       def redis_master

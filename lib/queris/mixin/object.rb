@@ -25,8 +25,8 @@ module Queris
         end
         index = redis_index_hash[index_match]
         if strict
-          raise "Index #{index_match} not found in #{name}" unless index
-          raise "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
+          raise SchemaError, "Index #{index_match} not found in #{name}" unless index
+          raise SchemaError, "Found wrong index class: expected #{index_class.name}, found #{index.class.name}" unless index.kind_of? index_class
         end
         index
       end
@@ -224,7 +224,7 @@ module Queris
       end
       
       def add_redis_index(index, opt={})
-        raise "Not an index" unless index.kind_of? Index
+        raise SchemaError, "Not an index" unless index.kind_of? Index
         #if (found = redis_index_hash[index.name])
           #todo: same-name indices are allowed, but with some caveats.
           #define and check them here.

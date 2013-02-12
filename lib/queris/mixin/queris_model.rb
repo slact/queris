@@ -59,7 +59,7 @@ module Queris
     def subquery(arg={})
       #TODO
       if arg.kind_of? Query #adopt a given query as subquery
-        raise "Trying to use a subquery from a different model" unless arg.model == model
+        raise Error, "Trying to use a subquery from a different model" unless arg.model == model
       else #create new subquery
         arg[:model]=model
       end
