@@ -45,7 +45,7 @@ module Queris
       end
       def restore(hash, id=nil)
         unless (@hashcache ||= stored_in_redis?)
-          raise "Can't restore ActiveRecord model from hash -- there isn't a HashCache index present. (Don't forget to use cache_all_attributes on the model)"
+          raise SchemaError, "Can't restore ActiveRecord model from hash -- there isn't a HashCache index present. (Don't forget to use cache_all_attributes on the model)"
         end
         unless (restored = @hashcache.load_cached hash)
           restored = find_cached id if id
@@ -73,7 +73,7 @@ module Queris
 
     def subquery(arg={})
       if arg.kind_of? Query #adopt a given query as subquery
-        raise "Trying to use a subquery from a different model" unless arg.model == model
+        raise Error, "Trying to use a subquery from a different model" unless arg.model == model
       else #create new subquery
         arg[:model]=model
       end

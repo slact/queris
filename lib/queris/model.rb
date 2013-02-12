@@ -119,7 +119,7 @@ module Queris
     end
 
     def set_id(id, overwrite=false)
-      raise "id already exists and is #{self.id}" unless overwrite || self.id.nil?
+      raise Error, "id already exists and is #{self.id}" unless overwrite || self.id.nil?
       @id = id
       self
     end
@@ -207,7 +207,7 @@ module Queris
     end
 
     def load(hash=nil, opt={})
-      raise "Can't load #{self.class.name} with id #{id} -- model was specified index_only, so it was never saved." if index_only
+      raise SchemaError, "Can't load #{self.class.name} with id #{id} -- model was specified index_only, so it was never saved." if index_only
       unless hash
         hash_future, hash_exists = nil, nil
         (opt[:redis] || redis).multi do |r|

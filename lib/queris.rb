@@ -2,6 +2,7 @@
 require "queris/version"
 require 'rubygems'
 require 'digest/sha1'
+require "queris/errors"
 require "queris/indices"
 require "queris/query"
 require "queris/mixin/object"
@@ -28,10 +29,10 @@ module Queris
    
     #returns another connection to the same server
     def duplicate_redis_client(redis, role=false)
-      raise "No redis client to duplicate."  unless redis
-      raise "Not a redis client" unless Redis === redis
+      raise RedisException, "No redis client to duplicate."  unless redis
+      raise RedisException, "Not a redis client" unless Redis === redis
       cl = redis.client
-      raise "Redis client doesn't have connection info (Can't get client info while in a redis.multi block... for now...)" unless cl.host
+      raise RedisException, "Redis client doesn't have connection info (Can't get client info while in a redis.multi block... for now...)" unless cl.host
       r = Redis.new({
                     port:      cl.port,
                     host:      cl.host,
@@ -73,9 +74,9 @@ module Queris
         begin
           hash = redis.script 'load', contents
         rescue Redis::CommandError => e
-          raise "Error loading script #{name}: #{e}"
+          raise ClientError, "Error loading script #{name}: #{e}"
         end
-        raise "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
+        raise Error, "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
       end
 
       def track_stats?
@@ -261,7 +262,7 @@ module Queris
       @script_hash||={}
       unless (hash=@script_hash[name])
         contents = script(name)
-        raise "Unknown redis script #{name}." unless contents
+        raise  Queris::Exception, "Unknown redis script #{name}." unless contents
         hash = Digest::SHA1.hexdigest contents
         @script_hash[name] = hash
       end
