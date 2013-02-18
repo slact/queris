@@ -15,7 +15,7 @@ First connect to redis. Let's assume a Redis server on localhost at standard por
 ```ruby
   Queris.add_redis Redis.new
 ```
-Let's say you have a User ActiveRecord object with some obvious attributes - id, name, email, age
+Let's say you have a User ActiveRecord model with some obvious attributes - id, name, email, age. Let's also assume a UserTags model, linked to User by its userId attribute.
 ```ruby
 class User < ActiveRecord::Base
   include Queris
@@ -30,6 +30,8 @@ To build indices:
 ```ruby
   User.build_redis_indices
 ```
+This will load all current User objects into memory and index said objects. You currently need enough space to keep the entire dataset in memory for building indices. (Future versions will be able to import data incrementally.)
+
 You can now query Users:
 ```ruby
 young_bob_and_steve = User.query(:ttl=>2.days).union(:name, ["Steve", "Bob"]).intersect(:age, 0..30).diff(:email, "steve@example.org") #query expires in 2 days
@@ -45,5 +47,7 @@ Queries can be expressed in set notation:
 bob_and_steve_and_bill.to_s # same as .explain
 #  ((name<["Steve", "Bob"]> ∩ age<0..30> ∖ email<steve@example.org>) ∪ name<Bill>)
 ```
+
+Note that query operations are applied sequentially (with no complex operator precedence rules), but can be arranged or grouped by the use of subqueries.
 
 ...more to follow...
