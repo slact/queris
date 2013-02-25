@@ -8,7 +8,7 @@ module Queris
     def self.debug?
       true
     end
-    def self.debuglog(range, rangewhat=nil)
+    def self.debuglog(range=0..5, rangewhat=nil)
       res = Queris.redis(:master).send (rangewhat == :time ? :zrangebyscore : :zrange), 'queris_query_errors', range.begin, range.end
       puts res.join("\r\n\r\n")
     end
