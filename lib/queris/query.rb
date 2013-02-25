@@ -5,6 +5,13 @@ require "queris/query/operations"
 require "queris/query/trace"
 module Queris
   class Query
+    def self.debug?
+      true
+    end
+    def self.debuglog(range, rangewhat=nil)
+      res = Queris.redis(:master).send (rangewhat == :time ? :zrangebyscore : :zrange), 'queris_query_errors', range.begin, range.end
+      puts res.join("\r\n\r\n")
+    end
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
     attr_reader :subqueries, :ttl
@@ -489,12 +496,17 @@ module Queris
       #puts "running static query #{self.id}, force: #{force || "no"}"
     
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
+      if Query.debug?
+        oldlog=redis.client.logger
+        strio=StringIO.new
+        redis.client.logger=Logger.new strio
+      end
       begin
         @profile.start :own_time
         temp_results_key = results_key "querying:#{SecureRandom.hex}"
         trace_callback = @trace ? @trace.method(:op) : nil
         redis.pipelined do |pipelined_redis|
-        #pipelined_redis = redis #for debugging
+        #pipelined_redis = redis; do #for debugging
           first_op = ops.first
           [ops, sort_ops].each do |ops|
             ops.each do |op|
@@ -509,23 +521,18 @@ module Queris
         @profile.finish :own_time
         set_time_cached Time.now if track_stats?
       rescue Redis::CommandError => e
-        debug={}
-        debug[self]=redis.type results_key
-        debug[temp_results_key]=redis.type temp_results_key
-        all_subqueries.each do |sub|
-          debug[sub]=redis.type results_key
+        if Query.debug?
+          redis.client.logger= nil
+          debug = []
+          debug << e.to_s
+          debug << self.info(:output => false)
+          strio.rewind
+          debug << strio.read
+          Queris.redis(:master).zadd "queris_query_errors", Time.now.utc.to_f, debug.join
         end
-        msg = [e.to_s]
-        debug.each do |k,v|
-          unless %w(set zset none).member?(v)
-            if Query === k
-              msg << "#{k} #{k.key} (#{v})"
-            else
-              msg << "#{k} (#{v})"
-            end
-          end
-        end
-        raise RedisError, msg.join("; ")
+        raise RedisError, "#{e.to_s} . Details at redis ZSET queris_query_errors on master"
+      ensure
+         redis.client.logger = oldlog if Query.debug?
       end
     end
     private :run_static_query
