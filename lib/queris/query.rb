@@ -10,7 +10,7 @@ module Queris
     end
     def self.debuglog(range=0..5, rangewhat=nil)
       res = Queris.redis(:master).send (rangewhat == :time ? :zrangebyscore : :zrange), 'queris_query_errors', range.begin, range.end
-      puts res.join("\r\n\r\n")
+      puts res.join("\r\n -------------------------------- \r\n")
     end
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
@@ -528,7 +528,7 @@ module Queris
           debug << self.info(:output => false)
           strio.rewind
           debug << strio.read
-          Queris.redis(:master).zadd "queris_query_errors", Time.now.utc.to_f, debug.join
+          Queris.redis(:master).zadd "queris_query_errors", Time.now.utc.to_f, debug.join("\r\n")
         end
         raise RedisError, "#{e.to_s} . Details at redis ZSET queris_query_errors on master"
       ensure
