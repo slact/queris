@@ -825,7 +825,7 @@ module Queris
       if arg.kind_of? Query
         subq = arg
       else
-        subq = self.class.new((arg[:model] or model), arg.merge(:redis_prefix => redis_prefix, :ttl => @ttl))
+        subq = self.class.new((arg[:model] or model), arg.merge(:complete_prefix => redis_prefix, :ttl => @ttl))
       end
       subq.use_redis redis
       unless @used_subquery[subq]
