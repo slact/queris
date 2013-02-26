@@ -619,6 +619,7 @@ module Queris
         res = (redis_master || redis).multi do |r|
           r.del all_query_keys
         end
+        @known_to_exist = nil
         flushed += res.first if res
       end
       flushed
