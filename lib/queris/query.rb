@@ -815,6 +815,11 @@ module Queris
 
     
     def subquery arg={}
+      if arg.kind_of? Query #adopt a given query as subquery
+        raise Error, "Trying to use a subquery from a different model" unless arg.model == model
+      else #create new subquery
+        arg[:model]=model
+      end
       @used_subquery ||= {}
       @results_key = nil
       if arg.kind_of? Query
