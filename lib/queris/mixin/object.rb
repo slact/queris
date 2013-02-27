@@ -102,7 +102,10 @@ module Queris
 
       def clear_queries!
         q = query
-        querykeys = redis.keys q.results_key(nil, "*")
+        querykeys = redis.keys "#{q.redis_prefix}*"
+        #old keys, too
+        querykeys.concat redis.keys("#{self.redis_prefix}#{q.class.name}*")
+        querykeys.uniq!
         print "Deleting #{querykeys.count} query keys for #{name}..."
         redis.multi do |r|
           querykeys.each {|k| r.del k}
