@@ -62,6 +62,7 @@ module Queris
         @operands = []
         @keys = []
         @weights = []
+        @subqueries = []
         @fragile = fragile
       end
       def push(index, val) # push operand
@@ -90,9 +91,13 @@ module Queris
       def operand_key_weight(op)
         1
       end
+      def subqueries
+        prepare
+        @subqueries || []
+      end
       def prepare
         return if @ready
-        @keys, @weights = [:result_key], [target_key_weight]
+        @keys, @weights, @subqueries = [:result_key], [target_key_weight], []
         operands.each do |op|
           k = block_given? ? yield(op) : op.key
           num_keys = @keys.length
@@ -105,6 +110,7 @@ module Queris
             raise ArgumentError, "something really wrong here"
           end
           @weights += [ operand_key_weight(op) ] * (@keys.length - num_keys)
+          @subqueries << op.index if Query === op.index
         end
         @ready = true
       end
@@ -113,6 +119,12 @@ module Queris
       end
       def run(redis, target, first=false, trace_callback=false)
         operands.each { |op| op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op }
+        subqueries_on_slave = !subqueries.empty? && redis != Queris.redis(:master)
+        if subqueries_on_slave
+          #prevent dummy result string on master from race-conditioning its way into the query
+          redis.multi
+          Queris.run_script :delete_if_string, redis, subqueries.map{|s| s.key}
+        end
         unless trace_callback
           redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
         else
@@ -128,6 +140,9 @@ module Queris
               trace_callback.call(self, op, target) if trace_callback
             end
           end
+        end
+        if subqueries_on_slave
+          redis.exec
         end
         operands.each { |op| op.index.after_query_op(redis, target, op.value, op) if op.index.respond_to? :after_query_op }
       end
