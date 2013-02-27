@@ -57,11 +57,7 @@ namespace :queris do
   
   def load_models
     # Load all the application's models. Courtesy of random patch for Sunspot ()
-    Rails.root.join('app', 'models').tap do |models_path|
-      Dir.glob(models_path.join('**', '*.rb')).map do |path|
-        ActiveSupport::Dependencies.require_or_load path.sub(models_path.to_s+'/', '')[0..-4] rescue nil
-      end.compact
-    end
+    Rails.application.eager_load! if defined? Rails
   end
   desc "Rebuild all queris indices, optionally deleting nearly everything beforehand"
   task :rebuild, [:clear] => :environment do |t, args|
