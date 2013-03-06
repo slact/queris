@@ -3,8 +3,10 @@ module Queris
   class Query
     private
     class Op #query operation
+  
       class Operand #boilerplate
         attr_accessor :index, :value
+        OPTIMIZATION_TRIGGER_MULTIPLIER = 3
         def initialize(op_index, val)
           @index = op_index
           @value = val
@@ -14,6 +16,15 @@ module Queris
         end
         def key
           index.key_for_query value
+        end
+        def optimized_key
+          k=key
+          if Enumerable===k
+            k.map! { |k| @optimized[k] || k }
+          else
+            k = @optimized[k] || k
+          end
+          k
         end
         def split
           if Array === key && Enumerable === value
@@ -29,8 +40,10 @@ module Queris
           Query === @index
         end
         def gather_key_sizes
+          puts "gathering key sizes"
           @size={}
-          if Enumerable === these_keys
+          k=index.key value #we want true index key, not key_for_query
+          if Enumerable === k
             k.each { |k| @size[k]=index.key_size(k) }
           else
             @size[k]=index.key_size(k)
@@ -59,6 +72,31 @@ module Queris
         def smallest_key_size
           raise ClientError "Attepted to get query operand key size, but it's not ready yet." unless Hash === @size
           @size[smallest_key]
+        end
+        def optimize(smallkey, smallsize)
+          k=key
+          optimized_something = nil
+          @optimized, @optimization_key = {}, smallkey
+          (Enumerable === k ? k : [k]).each do |k|
+            if key_size[k] > self.class.OPTIMIZATION_TRIGGER_MULTIPLIER * smallsize
+              @optimized[k]="#{k}:optimized:#{index.digest(smallkey)}"
+              optimized_something||=true
+            end
+          end
+          optimized_something
+        end
+        def optimized?
+          @optimized && !@optimized.empty? && @optimization_key
+        end
+        attr_reader :optimization_key
+        
+        def run_optimizations(redis)
+          if @optimized
+            Queris.run_script(:intersect_optimization, redis, [@optimization_key], [@optimized.flatten])
+          end
+        end
+        def optimized_temp_keys
+          @optimized.nil? ? [] : @optimized.values
         end
         def json_redis_dump(op_name = nil)
           ret = []
@@ -123,15 +161,27 @@ module Queris
       def operand_key_weight(op)
         1
       end
+      def optimized_temp_keys
+        optimized = []
+        operands.each { |op| optimized |= op.optimized_temp_keys }
+        optimized
+      end
       def subqueries
         prepare
         @subqueries || []
+      end
+      def optimize(smallkey, smallsize)
+        @optimized = nil
+        operands.each { |op| @optimized |= op.optimize(smallkey, smallsize) }
+      end
+      def optimized?
+        @optimized
       end
       def prepare
         return if @ready
         @keys, @weights, @subqueries = [:result_key], [target_key_weight], []
         operands.each do |op|
-          k = block_given? ? yield(op) : op.key
+          k = block_given? ? yield(op) : op.optimized_key
           num_keys = @keys.length
           if Array === k
             @keys |= k
@@ -146,16 +196,24 @@ module Queris
         end
         @ready = true
       end
+      def notready!
+        @ready = nil
+        self
+      end
       def operand_key(op)
         op.index.key_for_query op.value
       end
       def run(redis, target, first=false, trace_callback=false)
-        operands.each { |op| op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op }
         subqueries_on_slave = !subqueries.empty? && redis != Queris.redis(:master)
-        if subqueries_on_slave
+        
+        if subqueries_on_slave || optimized?
           #prevent dummy result string on master from race-conditioning its way into the query
           redis.multi
-          Queris.run_script :delete_if_string, redis, subqueries.map{|s| s.key}
+          Queris.run_script :delete_if_string, redis, subqueries.map{|s| s.key} if subqueries_on_slave
+        end
+        operands.each do |op| 
+          op.run_optimizations(redis)
+          op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op 
         end
         unless trace_callback
           redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
@@ -173,7 +231,7 @@ module Queris
             end
           end
         end
-        if subqueries_on_slave
+        if subqueries_on_slave || optimized?
           redis.exec
         end
         operands.each { |op| op.index.after_query_op(redis, target, op.value, op) if op.index.respond_to? :after_query_op }

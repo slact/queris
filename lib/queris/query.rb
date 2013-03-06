@@ -367,6 +367,9 @@ module Queris
       
       #okay, this query is now ready
       redis_master.multi do |r|
+        unless query.reusable_temp_keys.empty?
+          Queris.run_script :expire_temp_query_keys, query.reusable_temp_keys, [30]
+        end
         r.setex results_key(:exists), ttl, 1
         r.setnx results_key, 1 unless redis_master == redis
         r.expire results_key, ttl
@@ -487,7 +490,7 @@ module Queris
       self
     end
     alias :query :run
-
+    
     def run_static_query(force=nil)
       #puts "running static query #{self.id}, force: #{force || "no"}"
     
@@ -496,6 +499,18 @@ module Queris
         @profile.start :own_time
         temp_results_key = results_key "querying:#{SecureRandom.hex}"
         trace_callback = @trace ? @trace.method(:op) : nil
+
+        #optimize that shit
+        smallest, smallkey = Float::Infinity, nil
+        operations.reverse_each do |op|
+          if IntersectOp === op
+            opsmall, opsmallkey = op.smallest_key
+            smallest, smallkey = opsmall, opsmallkey if opsmall < smallest
+          else
+            op.optimize smallest, smallkey
+          end
+        end
+
         redis.pipelined do |pipelined_redis|
         #pipelined_redis = redis #for debugging
           first_op = ops.first
@@ -532,6 +547,13 @@ module Queris
       end
     end
     private :run_static_query
+    
+    def reusable_temp_keys
+      tkeys = []
+      operations.each {|op| tkeys |= op.optimized_temp_keys }
+      tkeys
+    end
+    private :reusable_temp_keys
     
     def all_subqueries
       ret = subqueries.dup
