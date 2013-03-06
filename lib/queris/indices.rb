@@ -436,7 +436,7 @@ module Queris
       @before_query.call(redis, results_key, val, op) if @before_query
       unless val.nil?
         rangehack_key = key_for_query val
-        redis.zunionstore rangehack_key, [ key ]
+        redis.zunionstore rangehack_key, [ op.optimized? ? op.optimized_key : key ]
         val = (val..val) unless Enumerable === val
         remove_inverse_range redis, rangehack_key, val
       end
