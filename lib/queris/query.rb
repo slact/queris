@@ -814,7 +814,11 @@ module Queris
     alias :size :count
     alias :length :count
 
-    
+    #current query size
+    def key_size(redis_key=nil, r=nil)
+      Queris.run_script :multisize, (r || redis), [redis_key || key]
+    end
+
     def subquery arg={}
       if arg.kind_of? Query #adopt a given query as subquery
         raise Error, "Trying to use a subquery from a different model" unless arg.model == model

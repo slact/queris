@@ -313,6 +313,9 @@ module Queris
       end
       update_live_delta obj
     end
+    def key_size(redis_key, r=nil)
+      (r || redis).scard redis_key
+    end
   end
 
   class ForeignIndex < SearchIndex
@@ -449,6 +452,9 @@ module Queris
     def distribution_summary
       keycounts = distribution.values
       "#{name}: #{keycounts.reduce(0){|a,b| a+b if Numeric === a && Numeric === b}} ids in #{keycounts.count} redis key."
+    end
+    def key_size(redis_key, r=nil)
+      (r || redis).zcard redis_key
     end
     private
     def remove_inverse_range(redis, key, val)
