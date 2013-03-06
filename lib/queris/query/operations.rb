@@ -28,6 +28,38 @@ module Queris
         def is_query?
           Query === @index
         end
+        def gather_key_sizes
+          @size={}
+          if Enumerable === these_keys
+            k.each { |k| @size[k]=index.key_size(k) }
+          else
+            @size[k]=index.key_size(k)
+          end
+        end
+        def key_size(redis_key)
+          raise ClientError "Attepted to get query operand key size, but it's not ready yet." unless Hash === @size
+          s = @size[k]
+          return Redis::Future === s ? s.value : s
+        end
+        def smallest_key
+          raise ClientError "Attepted to get query operand key size, but it's not ready yet." unless Hash === @size
+          k = key
+          smallest, smallest_key = Float::Infinity, nil
+          if Enumerable === k
+            k.each do |k|
+              if smallest > (keysize = key_size(k))
+                smallest, smallest_key = keysize, k
+              end
+            end
+          else
+            smallest, smallest_key = key_size(k), k
+          end
+          return smallest_key, smallest
+        end
+        def smallest_key_size
+          raise ClientError "Attepted to get query operand key size, but it's not ready yet." unless Hash === @size
+          @size[smallest_key]
+        end
         def json_redis_dump(op_name = nil)
           ret = []
           miniop = {}

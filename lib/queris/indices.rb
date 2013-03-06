@@ -331,7 +331,7 @@ module Queris
     alias :delete :create
     alias :update :create
     alias :eliminate :create
-    %w(set_key key key_for_query live_delta_key skip_create? exists? keys update_live_delta erase!).each do |methname|
+    %w(set_key key key_for_query live_delta_key skip_create? exists? keys update_live_delta key_size erase!).each do |methname|
       define_method methname do |*arg|
         @real_index.send methname, *arg
       end

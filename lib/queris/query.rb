@@ -392,6 +392,9 @@ module Queris
         @known_to_exist[:marshaled] = redis_master.exists results_key(:marshaled)
         @known_to_exist[:live]= redis_master.exists results_key(:live)
       end
+
+      #gather some optimization data
+      each_operand { |op| op.gather_key_sizes }
     end
     private :gather_master_existence_data
     
