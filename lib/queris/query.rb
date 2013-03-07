@@ -78,7 +78,7 @@ module Queris
     
     #TODO: obsolete this
     def stats_key
-      "#{@redis_prefix}:stats:#{digest explain}"
+      "#{@redis_prefix}:stats:#{Queris.digest explain}"
     end
     
     def time_cached
@@ -790,7 +790,7 @@ module Queris
         if (reused_set_key = uses_index_as_results_key?)
           @results_key = reused_set_key
         else
-          theid = raw_id || (digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}")
+          theid = raw_id || (Queris.digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}")
           thekey = "#{@redis_prefix}results:#{theid}"
           if raw_id
             return thekey
@@ -811,7 +811,7 @@ module Queris
     alias :key_for_query :key
     
     def id
-      digest results_key
+      Queris.digest results_key
     end
     
     def count(opt={})
@@ -1050,10 +1050,6 @@ module Queris
       index = use_index index
       @params[index.name]=val if index.respond_to? :name
       val
-    end
-    
-    def digest(value)
-      Queris.debug? ? value : Digest::SHA1.hexdigest(value.to_s)
     end
   end
 end

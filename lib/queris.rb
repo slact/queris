@@ -20,6 +20,9 @@ module Queris
   class << self
     attr_accessor :redis_scripts
     attr_accessor :debug
+    def digest(val)
+      Digest::SHA1.hexdigest(val.to_s)
+    end
     def debug?; @debug; end
   
     #retrieve redis connection matching given redis server role, in order or decreasing preference
@@ -263,7 +266,7 @@ module Queris
       unless (hash=@script_hash[name])
         contents = script(name)
         raise  Queris::Exception, "Unknown redis script #{name}." unless contents
-        hash = Digest::SHA1.hexdigest contents
+        hash = Queris.digest contents
         @script_hash[name] = hash
       end
       hash
