@@ -349,9 +349,9 @@ module Queris
         
         @known_to_exist = {}
         unless subquery
-          redis_master.multi {gather_master_existence_data}
+          redis_master.multi {gather_master_query_data}
         else
-          gather_master_existence_data
+          gather_master_query_data
         end
         if redis_master != redis
           #what's on the slave?
@@ -367,8 +367,8 @@ module Queris
       
       #okay, this query is now ready
       redis_master.multi do |r|
-        unless query.reusable_temp_keys.empty?
-          Queris.run_script :expire_temp_query_keys, query.reusable_temp_keys, [30]
+        unless reusable_temp_keys.empty?
+          Queris.run_script :expire_temp_query_keys, r, reusable_temp_keys, [30]
         end
         r.setex results_key(:exists), ttl, 1
         r.setnx results_key, 1 unless redis_master == redis
@@ -388,7 +388,7 @@ module Queris
       self
     end
     
-    def gather_master_existence_data
+    def gather_master_query_data
       min_ttl = self.class::MINIMUM_QUERY_TTL
       @known_to_exist[:query_on_master] = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl, redis_master == redis]
       if live?
@@ -397,9 +397,10 @@ module Queris
       end
 
       #gather some optimization data
+      #puts "gather query data for #{self}"
       each_operand { |op| op.gather_key_sizes }
     end
-    private :gather_master_existence_data
+    private :gather_master_query_data
     
     def ensure_subquery_existence(force=nil)
       #puts "ensuring subquery existence for #{self.id}"
@@ -491,6 +492,19 @@ module Queris
     end
     alias :query :run
     
+    def optimize
+      smallkey, smallest = nil, Float::INFINITY
+      #puts "optimizing query #{self}"
+      ops.reverse_each do |op|
+        #puts "optimizing op #{op}"
+        smallkey, smallest = op.optimize(smallkey, smallest)
+      end
+    end
+    private :optimize
+    def no_optimize!
+      @no_optimize=true
+      subqueries.each &:no_optimize!
+    end
     def run_static_query(force=nil)
       #puts "running static query #{self.id}, force: #{force || "no"}"
     
@@ -501,15 +515,7 @@ module Queris
         trace_callback = @trace ? @trace.method(:op) : nil
 
         #optimize that shit
-        smallest, smallkey = Float::Infinity, nil
-        operations.reverse_each do |op|
-          if IntersectOp === op
-            opsmall, opsmallkey = op.smallest_key
-            smallest, smallkey = opsmall, opsmallkey if opsmall < smallest
-          else
-            op.optimize smallest, smallkey
-          end
-        end
+        optimize unless @no_optimize
 
         redis.pipelined do |pipelined_redis|
         #pipelined_redis = redis #for debugging
@@ -550,7 +556,7 @@ module Queris
     
     def reusable_temp_keys
       tkeys = []
-      operations.each {|op| tkeys |= op.optimized_temp_keys }
+      ops.each {|op| tkeys |= op.optimized_temp_keys }
       tkeys
     end
     private :reusable_temp_keys

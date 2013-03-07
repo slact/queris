@@ -6,7 +6,6 @@ module Queris
   
       class Operand #boilerplate
         attr_accessor :index, :value
-        OPTIMIZATION_TRIGGER_MULTIPLIER = 3
         def initialize(op_index, val)
           @index = op_index
           @value = val
@@ -19,8 +18,9 @@ module Queris
         end
         def optimized_key
           k=key
+          @optimized||={}
           if Enumerable===k
-            k.map! { |k| @optimized[k] || k }
+            k.map! { |ky| @optimized[ky] || ky }
           else
             k = @optimized[k] || k
           end
@@ -40,7 +40,6 @@ module Queris
           Query === @index
         end
         def gather_key_sizes
-          puts "gathering key sizes"
           @size={}
           k=index.key value #we want true index key, not key_for_query
           if Enumerable === k
@@ -51,48 +50,30 @@ module Queris
         end
         def key_size(redis_key)
           raise ClientError "Attepted to get query operand key size, but it's not ready yet." unless Hash === @size
-          s = @size[k]
+          s = @size[redis_key]
           return Redis::Future === s ? s.value : s
         end
-        def smallest_key
-          raise ClientError "Attepted to get query operand key size, but it's not ready yet." unless Hash === @size
-          k = key
-          smallest, smallest_key = Float::Infinity, nil
-          if Enumerable === k
-            k.each do |k|
-              if smallest > (keysize = key_size(k))
-                smallest, smallest_key = keysize, k
-              end
-            end
-          else
-            smallest, smallest_key = key_size(k), k
-          end
-          return smallest_key, smallest
-        end
-        def smallest_key_size
-          raise ClientError "Attepted to get query operand key size, but it's not ready yet." unless Hash === @size
-          @size[smallest_key]
-        end
-        def optimize(smallkey, smallsize)
-          k=key
-          optimized_something = nil
-          @optimized, @optimization_key = {}, smallkey
-          (Enumerable === k ? k : [k]).each do |k|
-            if key_size[k] > self.class.OPTIMIZATION_TRIGGER_MULTIPLIER * smallsize
-              @optimized[k]="#{k}:optimized:#{index.digest(smallkey)}"
-              optimized_something||=true
-            end
-          end
-          optimized_something
+        def preintersect(smallkey, mykey)
+          #puts "preintersect #{self} with #{smallkey}"
+          @preintersect||={}
+          @optimized||={}
+          @preintersect[mykey]=smallkey
+          @optimized[mykey]="#{mykey}:optimized:#{Queris.digest mykey}"
         end
         def optimized?
-          @optimized && !@optimized.empty? && @optimization_key
+          @optimized && !@optimized.empty?
         end
         attr_reader :optimization_key
         
         def run_optimizations(redis)
-          if @optimized
-            Queris.run_script(:intersect_optimization, redis, [@optimization_key], [@optimized.flatten])
+          if @preintersect
+            @preintersect.each do |k, smallkey|
+              #puts "running optimization - preintersecting #{k} and #{smallkey}"
+              Queris.run_script(:query_intersect_optimization, redis, [@optimized[k], k, smallkey])
+            end
+            #puts "preintersected some stuff"
+          else
+            #puts "no optimizations to run"
           end
         end
         def optimized_temp_keys
@@ -171,12 +152,32 @@ module Queris
         @subqueries || []
       end
       def optimize(smallkey, smallsize)
+        #optimization walker. doesn't really do much unless given a decision block
         @optimized = nil
-        operands.each { |op| @optimized |= op.optimize(smallkey, smallsize) }
+        operands.each do |op|
+          idx = op.index
+          key = idx.key op.value
+          if Enumerable === key
+            key.each do |k|
+              yield k, op.key_size(k), op if block_given?
+            end
+          else
+            yield key, op.key_size(key), op if block_given?
+          end
+          if op.optimized?
+            @optimized = true
+            notready!
+          end
+        end
+        return smallkey, smallsize
       end
       def optimized?
         @optimized
       end
+      def notready!
+        @ready=nil; self
+      end
+      private :notready!
       def prepare
         return if @ready
         @keys, @weights, @subqueries = [:result_key], [target_key_weight], []
@@ -256,16 +257,45 @@ module Queris
       COMMAND = :zunionstore
       SYMBOL = :'∪'
       NAME = :union
+      
+      OPTIMIZATION_THRESHOLD_MULTIPLIER = 3
+      def optimize(smallkey, smallsize)
+        super do |key, size, op|
+          if smallsize * self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER < size
+            #puts "optimization reduced union(?) operand from #{size} to #{smallsize}"
+            op.preintersect(smallkey, key)
+          end
+        end
+        return smallkey, smallsize
+      end
     end
     class IntersectOp < Op
       COMMAND = :zinterstore
       SYMBOL = :'∩'
       NAME = :intersect
+      
+      OPTIMIZATION_THRESHOLD_MULTIPLIER = 5
+      def optimize(smallkey, smallsize)
+        smallestkey, smallestsize, smallestop = Float::INFINITY, Float::INFINITY, nil
+        super do |key, size, op|
+          smallestkey, smallestsize, smallestop = key, size, op if size < smallestsize
+        end
+        if smallsize * self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER < smallestsize
+          #puts "optimization reduced intersect operand from #{smallestsize} to #{smallsize}"
+          smallestop.preintersect(smallkey, smallestkey)
+        end
+        if smallestsize < smallsize
+          #puts "found a smaller intersect key: |#{smallestkey}|=#{smallestsize}"
+          return smallestkey, smallestsize
+        else
+          return smallkey, smallsize
+        end
+      end
     end
-    class DiffOp < Op
-      COMMAND = :zunionstore
+    class DiffOp < UnionOp
       SYMBOL = :'∖'
       NAME = :diff
+      
       def target_key_weight; 0; end
       def operand_key_weight(op=nil); :'-inf'; end
       def run(redis, result_key, *arg)
