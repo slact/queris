@@ -449,7 +449,7 @@ module Queris
       force = nil if Numeric === force && force <= 0
       #puts "run query #{self.id} force: #{force || "no"}"
       @trace = (opt[:trace] || @must_trace) ? Trace.new(self, (opt[:trace] || @must_trace)) : false
-      Queris::RedisStats.querying=true #this is for stats tracking purposes, really ought to be in a before_run query callback
+      Queris::RedisStats.querying=true unless opt[:subquery] #this is for stats tracking purposes, really ought to be in a before_run query callback
       model.run_query_callbacks :before_run, self
       if uses_index_as_results_key?
         #do nothing, we're using a results key directly
@@ -465,7 +465,7 @@ module Queris
             ensure_subquery_existence unless force_sub
             #run missing queries
             subqueries.each do |sub|
-              sub.run(opt.merge(:trace => @trace, :force => force_sub)) if force || !sub.existence_ensured?
+              sub.run(opt.merge(:subquery => true, :trace => @trace, :force => force_sub)) if force || !sub.existence_ensured?
             end
             run_static_query force
           else
@@ -487,7 +487,7 @@ module Queris
           sort_ops.each { |op| op.run predis, results_key }
         end
       end
-      Queris::RedisStats.querying=false #this is for stats tracking purposes, really ought to be in a before_run query callback
+      Queris::RedisStats.querying = false unless opt[:subquery] #this is for stats tracking purposes, really ought to be in a before_run query callback
       self
     end
     alias :query :run
