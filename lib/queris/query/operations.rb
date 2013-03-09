@@ -151,7 +151,7 @@ module Queris
         prepare
         @subqueries || []
       end
-      def optimize(smallkey, smallsize)
+      def optimize(smallkey, smallsize, page)
         #optimization walker. doesn't really do much unless given a decision block
         @optimized = nil
         operands.each do |op|
@@ -259,11 +259,16 @@ module Queris
       NAME = :union
       
       OPTIMIZATION_THRESHOLD_MULTIPLIER = 3
-      def optimize(smallkey, smallsize)
+      def optimize(smallkey, smallsize, page)
+        m = self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER
         super do |key, size, op|
-          if smallsize * self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER < size
-            #puts "optimization reduced union(?) operand from #{size} to #{smallsize}"
+          if smallsize * m < size
+            puts "optimization reduced union(?) operand from #{size} to #{smallsize}"
             op.preintersect(smallkey, key)
+          elsif page.size * m < size
+            page.use
+            puts "paging reduced union(?) operand from #{size} to #{page.size}"
+            op.preintersect(page.key, key)
           end
         end
         return smallkey, smallsize
@@ -275,13 +280,17 @@ module Queris
       NAME = :intersect
       
       OPTIMIZATION_THRESHOLD_MULTIPLIER = 5
-      def optimize(smallkey, smallsize)
+      def optimize(smallkey, smallsize, page)
         smallestkey, smallestsize, smallestop = Float::INFINITY, Float::INFINITY, nil
+        m = self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER
         super do |key, size, op|
           smallestkey, smallestsize, smallestop = key, size, op if size < smallestsize
         end
-        if smallsize * self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER < smallestsize
+        if smallsize * m < smallestsize
           #puts "optimization reduced intersect operand from #{smallestsize} to #{smallsize}"
+          smallestop.preintersect(smallkey, smallestkey)
+        elsif page.size * m < smallestsize
+          page.use
           smallestop.preintersect(smallkey, smallestkey)
         end
         if smallestsize < smallsize

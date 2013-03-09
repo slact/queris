@@ -5,6 +5,45 @@ require "queris/query/operations"
 require "queris/query/trace"
 module Queris
   class Query
+    class Page
+      attr_accessor :page
+      def initialize(prefix, sortops, page_size, ttl, page=0)
+        @prefix=prefix
+        @ops=sortops
+        @pagesize=page_size
+        @ttl=ttl
+        @page=page
+      end
+      attr_writer :current_count, :current_page, :total_count
+      define_method :current_count { fval(@current_count) || 0 }
+      define_method :current_page { fval(@current_page) || 0 }
+      define_method :total_count { fval(@total_count) || 0 }
+      
+      def key
+        @key||="#{@prefix}page:#{Queris.digest(@ops.join)}:#{@pagesize}:#{@page}"
+      end
+      
+      def page_in(range)
+        @key=nil
+        if current_count > range.max
+          page=current_page+1
+        end
+      end
+      def gather_data(redis, results_key, pagecount_key)
+        raise NotImplemented, "paging by multiple sorts not yet implemented" if @ops.count > 1 || Enumerable === @ops.first.key
+        current_count=Queris.run_script :multisize, redis, [results_key]
+        current_page=redis.get pagecount_key
+        total_count=redis.zcard ops.first.key
+      end
+      def create_page(redis)
+        raise NotImplemented, "paging by multiple sorts not yet implemented" if @ops.count > 1 || Enumerable === @ops.first.key
+        Queris.run_script(:zrangestore, redis, [key, ops.first.key], [page_size * page, page_size * (page+1), ttl])
+      end
+      private
+      def fval(val)#possible future value
+        Redis::Future === val ? val.value : val
+      end
+    end
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
     attr_reader :subqueries, :ttl
@@ -497,7 +536,7 @@ module Queris
       #puts "optimizing query #{self}"
       ops.reverse_each do |op|
         #puts "optimizing op #{op}"
-        smallkey, smallest = op.optimize(smallkey, smallest)
+        smallkey, smallest = op.optimize(smallkey, smallest, @page)
       end
     end
     private :optimize
@@ -529,6 +568,7 @@ module Queris
             r.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
             r.setex results_key(:exists), ttl, 1
           end
+          @current_count=Queris.run_script(:multisize, r, [results_key])
         end
         @profile.finish :own_time
         set_time_cached Time.now if track_stats?
@@ -665,7 +705,6 @@ module Queris
     #results(x..y, :score =>a..b) results from x to y with scores in given score range
     #results(x..y, :with_scores) return scores with results as [ [score1, res1], [score2, res2] ... ]
     def results(*arg)
-      run :no_update => !realtime?
       opt= Hash === arg.last ? arg.pop : {}
       opt[:reverse]=true if arg.member?(:reverse)
       opt[:with_scores]=true if arg.member?(:with_scores)
@@ -673,6 +712,19 @@ module Queris
       opt[:range]=(arg.shift .. arg.shift) if Numeric === arg[0] && arg[0].class == arg[1].class
       opt[:range]=(0..arg.shift) if Numeric === arg[0]
       opt[:raw] = true if arg.member? :raw
+      if paged? && opt[:range]
+        pg=Page.new(@redis_prefix, sort_ops, model.page_size, ttl)
+        redis.multi { |r| pg.gather_data(r) }
+        use_page pg
+        begin
+          run :no_update => !realtime?
+          pg.current_page = pg.current_page + 1
+          pg.current_count = current_count
+        end until pg.page_in opt[:range]
+      else
+        use_page nil
+        run :no_update => !realtime?
+      end
       
       key = results_key
       case (keytype=redis.type(key))
@@ -760,7 +812,13 @@ module Queris
       arg.push :raw
       results(*arg)
     end
-    
+
+    def use_page(page)
+      raise ArgumentError, "must be a Query::Page" unless Page === page
+      @page=page
+      subqueries.each {|s| s.use_page @page}
+    end
+
     def member?(id)
       id = id.id if model === id
       run :no_update => !realtime?
@@ -821,6 +879,7 @@ module Queris
     end
     
     def count(opt={})
+      use_page nil
       run(:no_update => !realtime?) unless opt [:no_run]
       key = results_key
       case redis.type(key)
