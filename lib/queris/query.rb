@@ -15,9 +15,9 @@ module Queris
         @page=page
       end
       attr_writer :current_count, :current_page, :total_count
-      define_method :current_count { fval(@current_count) || 0 }
-      define_method :current_page { fval(@current_page) || 0 }
-      define_method :total_count { fval(@total_count) || 0 }
+      define_method(:current_count) { fval(@current_count) || 0 }
+      define_method(:current_page) { fval(@current_page) || 0 }
+      define_method(:total_count) { fval(@total_count) || 0 }
       
       def key
         @key||="#{@prefix}page:#{Queris.digest(@ops.join)}:#{@pagesize}:#{@page}"
@@ -26,14 +26,14 @@ module Queris
       def page_in(range)
         @key=nil
         if current_count > range.max
-          page=current_page+1
+          @page=current_page+1
         end
       end
       def gather_data(redis, results_key, pagecount_key)
         raise NotImplemented, "paging by multiple sorts not yet implemented" if @ops.count > 1 || Enumerable === @ops.first.key
-        current_count=Queris.run_script :multisize, redis, [results_key]
-        current_page=redis.get pagecount_key
-        total_count=redis.zcard ops.first.key
+        self.current_count= Queris.run_script :multisize, redis, [results_key]
+        self.current_page= redis.get pagecount_key
+        self.total_count= redis.zcard ops.first.key
       end
       def create_page(redis)
         raise NotImplemented, "paging by multiple sorts not yet implemented" if @ops.count > 1 || Enumerable === @ops.first.key
@@ -405,21 +405,27 @@ module Queris
       yield force || query_exists
       
       #okay, this query is now ready
-      redis_master.multi do |r|
-        unless reusable_temp_keys.empty?
-          Queris.run_script :expire_temp_query_keys, r, reusable_temp_keys, [30]
-        end
-        r.setex results_key(:exists), ttl, 1
-        r.setnx results_key, 1 unless redis_master == redis
-        r.expire results_key, ttl
-        if live?
-          r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) unless @known_to_exist[:marshaled]
-          unless @known_to_exist[:live]
-            now=Time.now.utc.to_f
-            all_live_indices.each do |i| 
-              r.zadd results_key(:live), now, i.live_delta_key
+      if !paged? || @page.page==0
+        redis_master.multi do |r|
+          unless reusable_temp_keys.empty?
+            Queris.run_script :expire_temp_query_keys, r, reusable_temp_keys, [30]
+          end
+          r.setnx results_key, 1 unless redis_master == redis
+          r.setex results_key(:exists), ttl, 1
+          r.expire results_key, ttl
+          if live?
+            r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) unless @known_to_exist[:marshaled]
+            unless @known_to_exist[:live]
+              now=Time.now.utc.to_f
+              all_live_indices.each do |i| 
+                r.zadd results_key(:live), now, i.live_delta_key
+              end
+              r.expire results_key(:live), ttl
             end
-            r.expire results_key(:live), ttl
+          end
+          if paged?
+            r.setnx results_key(:pages), 'dummy'
+            r.setex results_key(:pages), ttl
           end
         end
       end
@@ -568,6 +574,7 @@ module Queris
             r.evalsha Queris.script_hash(:move_key), [temp_results_key, results_key]
             r.setex results_key(:exists), ttl, 1
           end
+          r.setex results_key(:pages), @page.page if paged?
           @current_count=Queris.run_script(:multisize, r, [results_key])
         end
         @profile.finish :own_time
@@ -714,7 +721,9 @@ module Queris
       opt[:raw] = true if arg.member? :raw
       if paged? && opt[:range]
         pg=Page.new(@redis_prefix, sort_ops, model.page_size, ttl)
-        redis.multi { |r| pg.gather_data(r) }
+        redis.multi do |r| 
+          pg.gather_data(r, results_key, results_key(:pages))
+        end
         use_page pg
         begin
           run :no_update => !realtime?
@@ -818,6 +827,9 @@ module Queris
       @page=page
       subqueries.each {|s| s.use_page @page}
     end
+    def paged?
+      @page
+    end
 
     def member?(id)
       id = id.id if model === id
@@ -856,6 +868,7 @@ module Queris
         else
           theid = raw_id || (Queris.digest(explain :subqueries => false) << ":subqueries:#{(@subqueries.length > 0 ? @subqueries.map{|q| q.id}.sort.join('&') : 'none')}" << ":sortby:#{sorting_by || 'nothing'}")
           thekey = "#{@redis_prefix}results:#{theid}"
+          thekey << ":paged:#{page.source_id}" if paged?
           if raw_id
             return thekey
           else
