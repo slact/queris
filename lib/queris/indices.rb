@@ -429,14 +429,15 @@ module Queris
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name}')"
     end
     
-    #there's no Z(UNION|INTER)STORE with range, so we need to extract the desired range
+    #there's no ZRANGESTORE, so we need to extract the desired range
     #to a temporary zset first
     def before_query_op(redis, results_key, val, op=nil)
       #copy to temp key if needed
       @before_query.call(redis, results_key, val, op) if @before_query
       unless val.nil?
         rangehack_key = key_for_query val
-        redis.zunionstore rangehack_key, [ op.optimized? ? op.optimized_key : key ]
+        #src_key = op.optimized? ? op.optimized_key(key) : key
+        redis.zunionstore rangehack_key, [ key ] #slow as a spiky shit
         val = (val..val) unless Enumerable === val
         remove_inverse_range redis, rangehack_key, val
       end

@@ -16,8 +16,8 @@ module Queris
         def key
           index.key_for_query value
         end
-        def optimized_key
-          k=key
+        def optimized_key(whichkey=nil)
+          k=whichkey || key
           @optimized||={}
           if Enumerable===k
             k.map! { |ky| @optimized[ky] || ky }
@@ -58,7 +58,7 @@ module Queris
           @preintersect||={}
           @optimized||={}
           @preintersect[mykey]=smallkey
-          @optimized[mykey]="#{mykey}:optimized:#{Queris.digest mykey}"
+          @optimized[mykey]="#{mykey}:optimized:#{Queris.digest smallkey}"
         end
         def optimized?
           @optimized && !@optimized.empty?
@@ -116,6 +116,10 @@ module Queris
         @subqueries = []
         @fragile = fragile
       end
+      def notready!
+        @ready=nil
+        self
+      end
       def push(index, val) # push operand
         @ready = nil
         @operands << Operand.new(index,val)
@@ -151,7 +155,7 @@ module Queris
         prepare
         @subqueries || []
       end
-      def optimize(smallkey, smallsize, page)
+      def optimize(smallkey, smallsize, page=nil)
         #optimization walker. doesn't really do much unless given a decision block
         @optimized = nil
         operands.each do |op|
@@ -259,14 +263,14 @@ module Queris
       NAME = :union
       
       OPTIMIZATION_THRESHOLD_MULTIPLIER = 3
-      def optimize(smallkey, smallsize, page)
+      def optimize(smallkey, smallsize, page=nil)
         m = self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER
         super do |key, size, op|
           if smallsize * m < size
             puts "optimization reduced union(?) operand from #{size} to #{smallsize}"
             op.preintersect(smallkey, key)
-          elsif page.size * m < size
-            page.use
+          elsif page && page.size * m < size
+            page.in_use!
             puts "paging reduced union(?) operand from #{size} to #{page.size}"
             op.preintersect(page.key, key)
           end
@@ -289,8 +293,8 @@ module Queris
         if smallsize * m < smallestsize
           #puts "optimization reduced intersect operand from #{smallestsize} to #{smallsize}"
           smallestop.preintersect(smallkey, smallestkey)
-        elsif page.size * m < smallestsize
-          page.use
+        elsif page && page.size * m < smallestsize
+          page.in_use!
           smallestop.preintersect(smallkey, smallestkey)
         end
         if smallestsize < smallsize

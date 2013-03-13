@@ -89,6 +89,14 @@ module Queris
         redis_query arg, &block
       end
 
+      def page_size(n=nil)
+        if n.nil?
+          @page_size || 1000
+        else
+          @page_size=n
+        end
+      end
+      
       def info(arg={})
         puts "#{self.name} model info:"
         redis_indices.each do |i|
