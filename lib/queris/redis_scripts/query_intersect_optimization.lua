@@ -1,4 +1,3 @@
-redis.log(redis.LOG_WARNING, " query_intersect_opt BEGIN")
 local dstkey, key, smallkey = KEYS[1], KEYS[2], KEYS[3]
 local ttl = ARGV[1] or 120
 local t=redis.call('type', dstkey).ok
@@ -21,11 +20,9 @@ local multisize = function(key)
     return "WTF for " .. keytype
   end
 end
-redis.log(redis.LOG_WARNING, " query_intersect_opt")
 if t ~= 'zset' then
   redis.call('zinterstore', dstkey, 2, key, smallkey, 'weights', 1, 0)
   redis.call('expire', dstkey, ttl)
-  redis.log(redis.LOG_WARNING, " query_intersect_opt ttl=" .. ttl)
   for i,v in pairs({dstkey, key, smallkey}) do
     redis.log(redis.LOG_WARNING, " inter: " .. v .. ": " .. multisize(v))
   end

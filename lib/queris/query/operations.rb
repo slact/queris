@@ -5,8 +5,9 @@ module Queris
     class Op #query operation
   
       class Operand #boilerplate
-        attr_accessor :index, :value
+        attr_accessor :index, :value, :temp_keys
         def initialize(op_index, val)
+          @temp_keys = []
           @index = op_index
           @value = val
         end
@@ -27,8 +28,8 @@ module Queris
           k
         end
         def split
-          if Array === key && Enumerable === value
-            raise ClientError, "Sanity check failed - different number of keys and values, bailing." if key.length != value.length
+          if Array === key && Enuerable === value
+            raise ClientError, "Sanimty check failed - different number of keys and values, bailing." if key.length != value.length
             value.map do |val|
               self.class.new(index, val)
             end
@@ -39,13 +40,13 @@ module Queris
         def is_query?
           Query === @index
         end
-        def gather_key_sizes
+        def gather_key_sizes(redis)
           @size={}
-          k=index.key value #we want true index key, not key_for_query
+          k=key #we assume the key already exists on redis (it should have been created by the responsible index earlier)
           if Enumerable === k
-            k.each { |k| @size[k]=index.key_size(k) }
+            k.each { |k| @size[k]=index.key_size(k, redis) }
           else
-            @size[k]=index.key_size(k)
+            @size[k]=index.key_size(k, redis)
           end
         end
         def key_size(redis_key)
@@ -58,7 +59,10 @@ module Queris
           @preintersect||={}
           @optimized||={}
           @preintersect[mykey]=smallkey
-          @optimized[mykey]="#{mykey}:optimized:#{Queris.digest smallkey}"
+          preintersect_key = "#{mykey}:optimized:#{Queris.digest smallkey}"
+          @optimized[mykey]=preintersect_key
+          temp_keys << preintersect_key
+          preintersect_key
         end
         def optimized?
           @optimized && !@optimized.empty?
@@ -76,9 +80,7 @@ module Queris
             #puts "no optimizations to run"
           end
         end
-        def optimized_temp_keys
-          @optimized.nil? ? [] : @optimized.values
-        end
+        
         def json_redis_dump(op_name = nil)
           ret = []
           miniop = {}
@@ -146,10 +148,14 @@ module Queris
       def operand_key_weight(op)
         1
       end
-      def optimized_temp_keys
+      def temp_keys
         optimized = []
-        operands.each { |op| optimized |= op.optimized_temp_keys }
+        operands.each { |op| optimized |= op.temp_keys }
         optimized
+      end
+      def temp_keys?
+        operands.each { |op| return true unless op.temp_keys.empty? }
+        nil
       end
       def subqueries
         prepare
@@ -159,10 +165,9 @@ module Queris
         #optimization walker. doesn't really do much unless given a decision block
         @optimized = nil
         operands.each do |op|
-          idx = op.index
-          key = idx.key op.value
+          key = op.key
           if Enumerable === key
-            key.each do |k|
+            key.eac h do |k|
               yield k, op.key_size(k), op if block_given?
             end
           else
@@ -207,6 +212,12 @@ module Queris
       end
       def operand_key(op)
         op.index.key_for_query op.value
+      end
+      def before_query_slave(redis)
+        operands.each do |op|
+          op.index.before_query_slave(redis, op.value, self) if op.index.respond_to? :before_query_slave
+          op.gather_key_sizes(redis)
+        end
       end
       def run(redis, target, first=false, trace_callback=false)
         subqueries_on_slave = !subqueries.empty? && redis != Queris.redis(:master)
@@ -284,7 +295,7 @@ module Queris
       NAME = :intersect
       
       OPTIMIZATION_THRESHOLD_MULTIPLIER = 5
-      def optimize(smallkey, smallsize, page)
+      def optimize(smallkey, smallsize, page=nil)
         smallestkey, smallestsize, smallestop = Float::INFINITY, Float::INFINITY, nil
         m = self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER
         super do |key, size, op|
@@ -295,7 +306,7 @@ module Queris
           smallestop.preintersect(smallkey, smallestkey)
         elsif page && page.size * m < smallestsize
           page.in_use!
-          smallestop.preintersect(smallkey, smallestkey)
+          smallestop.preintersect(page.key, smallestkey)
         end
         if smallestsize < smallsize
           #puts "found a smaller intersect key: |#{smallestkey}|=#{smallestsize}"

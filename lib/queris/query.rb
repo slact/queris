@@ -412,11 +412,12 @@ module Queris
         #puts "ensuring #{subquery ? "subquery" : "query"} #{self.id} exists"
         return true if uses_index_as_results_key?
         #check for existence on master
-        
         @known_to_exist = {}
         unless subquery
+          redis.multi { ops.each { |op| op.before_query_slave(redis) } }
           redis_master.multi {gather_master_query_data}
         else
+          ops.each { |op| op.before_query_slave(redis) }
           gather_master_query_data
         end
         if redis_master != redis
@@ -433,8 +434,9 @@ module Queris
       
       #okay, this query is now ready
       redis_master.multi do |r|
-        unless reusable_temp_keys.empty?
-          Queris.run_script :expire_temp_query_keys, r, reusable_temp_keys, [90]
+        if reusable_temp_keys?
+          puts "temp keys (#{reusable_temp_keys.count}): #{reusable_temp_keys.join ', '}"
+          Queris.run_script :expire_temp_query_keys, r, reusable_temp_keys, [@temp_ttl || 300]
         end
         if !paged? || @page.page==0
           r.setex results_key(:exists), ttl, 1
@@ -467,10 +469,6 @@ module Queris
         @known_to_exist[:marshaled] = redis_master.exists results_key(:marshaled)
         @known_to_exist[:live]= redis_master.exists results_key(:live)
       end
-
-      #gather some optimization data
-      #puts "gather query data for #{self}"
-      each_operand { |op| op.gather_key_sizes }
     end
     private :gather_master_query_data
     
@@ -589,7 +587,6 @@ module Queris
 
         #optimize that shit
         optimize unless @no_optimize
-        fullsize, pagesize=nil,nil
         redis.pipelined do |pipelined_redis|
 #        pipelined_redis = redis #for debugging
           @page.create_page(pipelined_redis) if paged?
@@ -602,8 +599,6 @@ module Queris
           pipelined_redis.multi do |r|
             if paged?
               Queris.run_script :delete_if_string, r, [results_key]
-              fullsize= Queris.run_script(:multisize, r, [results_key])
-              pagesize= Queris.run_script(:multisize, r, [temp_results_key])
               r.zunionstore results_key, [results_key, temp_results_key], :aggregate => 'max'
               r.del temp_results_key
             else
@@ -643,13 +638,19 @@ module Queris
     
     def reusable_temp_keys
       tkeys = []
-      ops.each {|op| tkeys |= op.optimized_temp_keys }
-      if paged? && @page.in_use?
-        tkeys << @page.key
+      ops.each do |op|
+        tkeys |= op.temp_keys
       end
+      tkeys << @page.key if paged? && @page.in_use?
       tkeys
     end
     private :reusable_temp_keys
+    def reusable_temp_keys?
+      return true if paged? && @page.in_use?
+      ops.each {|op| return true if op.temp_keys?}
+      nil
+    end
+    private :reusable_temp_keys?
     
     def all_subqueries
       ret = subqueries.dup

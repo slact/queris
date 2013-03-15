@@ -59,6 +59,11 @@ module Queris
     def keypattern
       @keypattern ||= key('*', nil, true) if respond_to? :key
     end
+    
+    def temp_keys(val) #any temporary keys for index at given value?
+      []
+    end
+    
     #info about data distribution in an index
     def distribution
       k = keys
@@ -431,24 +436,18 @@ module Queris
     
     #there's no ZRANGESTORE, so we need to extract the desired range
     #to a temporary zset first
-    def before_query_op(redis, results_key, val, op=nil)
+    def before_query_slave(redis, val, operation=nil)
       #copy to temp key if needed
-      @before_query.call(redis, results_key, val, op) if @before_query
       unless val.nil?
         rangehack_key = key_for_query val
-        #src_key = op.optimized? ? op.optimized_key(key) : key
-        redis.zunionstore rangehack_key, [ key ] #slow as a spiky shit
+        Queris.run_script :copy_key_if_absent, redis, [rangehack_key, key] #can be spiky-shit slow if whole zset must be copied
         val = (val..val) unless Enumerable === val
         remove_inverse_range redis, rangehack_key, val
+        operation.temp_keys << rangehack_key
       end
     end
-    #clean up temporary ranged zset
-    def after_query_op(redis, results_key, val, op=nil)
-      unless val.nil?
-        rangehack_key = key_for_query val
-        raise ClientError, "RangeIndex rangehack bug. Inform Queris maintainers." if key(val) == rangehack_key
-        redis.del rangehack_key
-      end
+    def temp_keys(val=nil)
+      val.nil? ? [] : [ key_for_query(val) ]
     end
     def distribution_summary
       keycounts = distribution.values
@@ -460,11 +459,12 @@ module Queris
     private
     def remove_inverse_range(redis, key, val)
       first, last = val.begin.to_f, val.end.to_f
+      range_end = "#{!val.exclude_end? ? '(' : nil}#{last}"
       if (first <= last)
         redis.zremrangebyscore key, '-inf', "(#{first}" unless first == -Float::INFINITY
-        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{last}", 'inf' unless last == Float::INFINITY
+        redis.zremrangebyscore key, range_end, 'inf' unless last == Float::INFINITY
       else
-        redis.zremrangebyscore key, "#{!val.exclude_end? && '('}#{last}", "(#{first}"
+        redis.zremrangebyscore key, range_end, "(#{first}"
       end
     end
   end
