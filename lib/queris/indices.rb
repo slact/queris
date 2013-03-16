@@ -436,7 +436,7 @@ module Queris
     
     #there's no ZRANGESTORE, so we need to extract the desired range
     #to a temporary zset first
-    def before_query_slave(redis, val, operation=nil)
+    def query_pipeline_gather(redis, val, operation=nil)
       #copy to temp key if needed
       unless val.nil?
         rangehack_key = key_for_query val

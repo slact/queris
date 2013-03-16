@@ -580,59 +580,40 @@ module Queris
       #puts "running static query #{self.id}, force: #{force || "no"}"
     
       #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
-      #begin
-        @profile.start :own_time
-        temp_results_key = results_key "querying:#{SecureRandom.hex}"
-        trace_callback = @trace ? @trace.method(:op) : nil
 
-        #optimize that shit
-        optimize unless @no_optimize
-        redis.pipelined do |pipelined_redis|
+      @profile.start :own_time
+      temp_results_key = results_key "querying:#{SecureRandom.hex}"
+      trace_callback = @trace ? @trace.method(:op) : nil
+
+      #optimize that shit
+      optimize unless @no_optimize
+      redis.pipelined do |pipelined_redis|
 #        pipelined_redis = redis #for debugging
-          @page.create_page(pipelined_redis) if paged?
-          first_op = ops.first
-          [ops, sort_ops].each do |ops|
-            ops.each do |op|
-              op.run pipelined_redis, temp_results_key, first_op == op, trace_callback
-            end
-          end
-          pipelined_redis.multi do |r|
-            if paged?
-              Queris.run_script :delete_if_string, r, [results_key]
-              r.zunionstore results_key, [results_key, temp_results_key], :aggregate => 'max'
-              r.del temp_results_key
-            else
-              Queris.run_script :move_key, r, [temp_results_key, results_key]
-              r.setex results_key(:exists), ttl, 1
-            end
-          end
-          if paged?
-            pipelined_redis.setex results_key(:pages), ttl, @page.page
-            @page.last_loaded_page = @page.page
-            @current_count=Queris.run_script(:multisize, pipelined_redis, [results_key])
+        @page.create_page(pipelined_redis) if paged?
+        first_op = ops.first
+        [ops, sort_ops].each do |ops|
+          ops.each do |op|
+            op.run pipelined_redis, temp_results_key, first_op == op, trace_callback
           end
         end
-        @profile.finish :own_time
-        set_time_cached Time.now if track_stats?
-  #    rescue Redis::CommandError => e
-   #     debug={}
-    #    debug[self]=redis.type results_key
-     #   debug[temp_results_key]=redis.type temp_results_key
-      #  all_subqueries.each do |sub|
-       #   debug[sub]=redis.type results_key
-        #end
-  #      msg = [e.to_s]
-   #     debug.each do |k,v|
-    #      unless %w(set zset none).member?(v)
-     #       if Query === k
-      #        msg << "#{k} #{k.key} (#{v})"
-  #          else
-   #           msg << "#{k} (#{v})"
-    #        end
-     #     end
-      #  end
- #       raise RedisError, msg.join("; ")
-#      end
+        pipelined_redis.multi do |r|
+          if paged?
+            Queris.run_script :delete_if_string, r, [results_key]
+            r.zunionstore results_key, [results_key, temp_results_key], :aggregate => 'max'
+            r.del temp_results_key
+          else
+            Queris.run_script :move_key, r, [temp_results_key, results_key]
+            r.setex results_key(:exists), ttl, 1
+          end
+        end
+        if paged?
+          pipelined_redis.setex results_key(:pages), ttl, @page.page
+          @page.last_loaded_page = @page.page
+          @current_count=Queris.run_script(:multisize, pipelined_redis, [results_key])
+        end
+      end
+      @profile.finish :own_time
+      set_time_cached Time.now if track_stats?
     end
     private :run_static_query
     
@@ -656,6 +637,15 @@ module Queris
       ret = subqueries.dup
       subqueries.each { |sub| ret.concat sub.all_subqueries }
       ret
+    end
+    
+    def each_subquery(recursive=true) #dependency-ordered
+      subqueries.each do |s|
+        s.each_subquery do |ss|
+          yield ss
+        end
+        yield s
+      end
     end
     
     def trace!(opt={})
