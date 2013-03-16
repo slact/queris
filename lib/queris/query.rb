@@ -1145,7 +1145,7 @@ module Queris
         end
       end
     end
-    
+
     def all_index_keys
       keys = []
       [ops, sort_ops].each do |ops|
@@ -1154,7 +1154,47 @@ module Queris
       keys << key
       keys.uniq
     end
-
+    
+    def run_stage(stage, r)
+      method_name = "query_pipeline_#{stage}"
+      yield(r) if block_given?
+      @page.call method_name, r if paged?
+      each_subquery do |sub| 
+        #assumes all_subqueries respect subquery dependency ordering (deepest subqueries first)
+        sub.run_stage stage, r
+      end
+      [ops, sort_ops].each do |operation|
+        operation.call method_name, r
+      end
+      
+    end
+    
+    def run_pipeline(redis, *stages)
+      redis.pipelined do |r|
+        if block_given?
+          run_stage(stage, r, &Proc.new)
+        else
+          run_stage(stage, r)
+        end
+      end
+    end
+    
+    def run(opt={})
+      raise ClientError, "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
+      #parse run options
+      force = opt[:force]
+      force = nil if Numeric === force && force <= 0
+      
+      #run this sucker
+      run_pipeline redis, :gather
+      if redis == redis_master
+        run_pipeline redis_master, :prepare, :run
+      else
+        run_pipeline redis_master, :prepare
+        run_pipeline redis, :run
+      end
+      run_pipeline redis_master, :finish
+    end
     private
     
     def use_index *arg

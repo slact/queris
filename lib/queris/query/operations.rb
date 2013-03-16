@@ -118,6 +118,14 @@ module Queris
         @subqueries = []
         @fragile = fragile
       end
+      
+      def query_pipeline_prepare(r)
+        operands.each do |op|
+          op.index.query_callback_prepare(r, op.value, self) if op.index.respond_to? :query_pipeline_prepare
+          op.gather_key_sizes(r)
+        end
+      end
+      
       def notready!
         @ready=nil
         self
@@ -213,12 +221,7 @@ module Queris
       def operand_key(op)
         op.index.key_for_query op.value
       end
-      def before_query_slave(redis)
-        operands.each do |op|
-          op.index.before_query_slave(redis, op.value, self) if op.index.respond_to? :before_query_slave
-          op.gather_key_sizes(redis)
-        end
-      end
+
       def run(redis, target, first=false, trace_callback=false)
         subqueries_on_slave = !subqueries.empty? && redis != Queris.redis(:master)
         
