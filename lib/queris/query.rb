@@ -24,7 +24,7 @@ module Queris
       def gather_data(redis, results_key, pagecount_key)
         puts "gather page data for key #{results_key}"
         @current_count= Queris.run_script :multisize, redis, [results_key]
-        @last_loaded_page= redis.get pagecount_key
+        @last_loaded_page ||= redis.get pagecount_key
         @total_count ||= redis.zcard source_key
       end
       def query_run_stage_inspect(r, q)
@@ -33,31 +33,38 @@ module Queris
       end
       def query_run_stage_prepare(r, q)
         @last_loaded_page = nil if fluxcap(@last_loaded_page)=='dummy'
+        
         create_page(r)
       end
       def query_run_stage_after_run(r, q)
         puts "write last_loaded_page for #{q}"
-        query_run_stage_inspect(r, q)
+        llp = fluxcap(@last_loaded_page)
+        llp=llp.to_i if llp
+        @last_loaded_page = @page
         r.set q.results_key(:last_loaded_page), fluxcap(@last_loaded_page)
-        gather_ready_data(r,q)
+        query_run_stage_inspect(r, q)
       end
       def gather_ready_data(r, q)
         puts "gather paged ready data for #{self}"
         @ready = Queris.run_script(:paged_query_ready, r, [q.results_key, q.results_key(:exists), source_key, q.runstate_key(:ready)])
       end
       
-      def next
-        puts "next page maybe? (now on #{@page})"
+      def seek
         last, cur_count = fluxcap(@last_loaded_page), fluxcap(@current_count)
         last=nil if last == ""
+        last=last.to_i unless last.nil?
+        cur_count=cur_count.to_i unless cur_count.nil?
         @key=nil
         if last.nil?
-          @page, @last_loaded_page=1, 0
+          @page=0
+          puts "seeking next page... will be #{@page} last_loaded = #{last}, cur_count = #{cur_count}, total max = #{fluxcap @total_count}"
           false
-        elsif cur_count < range.max && ((last + 1) * size < cur_count)
+        elsif cur_count < range.max && ((last + 1) * size < fluxcap(@total_count))
           @page = last + 1
+          puts "seeking next page... will be #{@page} last_loaded = #{last}, cur_count = #{cur_count}, total max = #{fluxcap @total_count}"
           false
         else
+          puts "no need to seek, we are here"
           true
         end
       end
@@ -83,7 +90,7 @@ module Queris
         llp=nil if llp==""
         return if (llp && llp == @page)
         redis.eval("redis.log(redis.LOG_WARNING, 'want page #{@page}!!!!!!!!1')")
-        Queris.run_script(:create_page_if_absent, redis, [key, source_key], [@pagesize * @page, @pagesize * (@page + 1), @ttl])
+        Queris.run_script(:create_page_if_absent, redis, [key, source_key], [@pagesize * @page, @pagesize * (@page + 1) -1, @ttl])
       end
       private
       def fluxcap(val)#possible future value
@@ -1052,12 +1059,13 @@ module Queris
     
     def run_pipeline(redis, *stages)
       puts "query run pipelines START [#{stages.join ', '}]"
-      redis.pipelined do |r|
+      #redis.pipelined do |r|
+      r = redis
         stages.each do |stage|
           run_stage(stage, r)
         end
         yield(r, self) if block_given?
-      end
+      #end
       puts "query run pipelines END [#{stages.join ', '}]"
     end
     
@@ -1189,8 +1197,9 @@ module Queris
         run_pipeline redis_master, :reserve
         if paged?
           begin
+            @page.seek
             run_pipeline redis, :prepare, :run, :after_run
-          end until @page.ready? { @page.next }
+          end until @page.ready?
         else
           run_pipeline redis, :prepare, :run, :after_run
         end
