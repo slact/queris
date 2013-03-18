@@ -28,8 +28,8 @@ module Queris
           k
         end
         def split
-          if Array === key && Enuerable === value
-            raise ClientError, "Sanimty check failed - different number of keys and values, bailing." if key.length != value.length
+          if Array === key && Enumerable === value
+            raise ClientError, "Sanity check failed - different number of keys and values, bailing." if key.length != value.length
             value.map do |val|
               self.class.new(index, val)
             end
@@ -119,9 +119,12 @@ module Queris
         @fragile = fragile
       end
       
-      def query_pipeline_prepare(r)
+      def query_run_stage_inspect(r, q)
         operands.each do |op|
-          op.index.query_callback_prepare(r, op.value, self) if op.index.respond_to? :query_pipeline_prepare
+          #this logic belongs elsewhere but is here for premature optimization
+          if Queris::RangeIndex === op.index && op.index.rangehack?(op.value)
+            op.index.ensure_rangehack_exists(r, op.value, q)
+          end
           op.gather_key_sizes(r)
         end
       end
@@ -175,7 +178,7 @@ module Queris
         operands.each do |op|
           key = op.key
           if Enumerable === key
-            key.eac h do |k|
+            key.each do |k|
               yield k, op.key_size(k), op if block_given?
             end
           else
@@ -350,6 +353,12 @@ module Queris
       end
       def operand_key(op)
         op.index.key op.value
+      end
+      def query_run_stage_inspect(r, q)
+        operands.each do |op|
+          #don't trigger the rangehack
+          op.gather_key_sizes(r)
+        end
       end
       def run(redis, target, first=false, trace_callback=nil)
         sort_keys = keys(target, first)

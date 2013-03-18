@@ -5,7 +5,7 @@ redis.log(redis.LOG_WARNING, "want a page at " .. dst .. " from " .. source)
 if dst_type == 'string' then
   redis.call('del', dst)
 elseif dst_type == 'zset' then
-  redis.log(redis.LOG_WARNING, 'page ' .. dst .. ' already exists')
+  redis.log(redis.LOG_WARNING, 'page ' .. dst .. ' already exists with size ' .. redis.call('zcard', dst))
   return redis.call('zcard', dst)
 end
 
