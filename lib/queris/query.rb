@@ -22,19 +22,14 @@ module Queris
         [ q.results_key(:last_loaded_page) ]
       end
       def gather_data(redis, results_key, pagecount_key)
-        puts "gather page data for key #{results_key}"
+        #puts "gather page data for key #{results_key}"
         @current_count= Queris.run_script :multisize, redis, [results_key]
         @last_loaded_page ||= redis.get pagecount_key
         @total_count ||= redis.zcard source_key
       end
-      def query_run_stage_inspect(r, q)
+      def inspect_query(r, q)
         gather_data(r, q.results_key, q.results_key(:last_loaded_page))
         gather_ready_data(r, q)
-      end
-      def query_run_stage_prepare(r, q)
-        @last_loaded_page = nil if fluxcap(@last_loaded_page)=='dummy'
-        
-        create_page(r)
       end
       def query_run_stage_after_run(r, q)
         puts "write last_loaded_page for #{q}"
@@ -42,7 +37,7 @@ module Queris
         llp=llp.to_i if llp
         @last_loaded_page = @page
         r.set q.results_key(:last_loaded_page), fluxcap(@last_loaded_page)
-        query_run_stage_inspect(r, q)
+        inspect_query(r, q)
       end
       def gather_ready_data(r, q)
         puts "gather paged ready data for #{self}"
@@ -1190,15 +1185,18 @@ module Queris
       #the following logic must apply to ALL queries (and subqueries),
       #since all queries run pipeline stages in 'parallel' (on the same redis pipeline)
       @profile.start :time
-      run_pipeline redis, :begin do |r|
+      run_pipeline redis, :begin do |r, q|
         run_stage :inspect, r
+        @page.inspect_query(r, self) if paged?
       end
       if !ready? || force
         run_pipeline redis_master, :reserve
         if paged?
           begin
             @page.seek
-            run_pipeline redis, :prepare, :run, :after_run
+            run_pipeline redis, :prepare, :run, :after_run do |r, q|
+              @page.inspect_query(r, self)
+            end
           end until @page.ready?
         else
           run_pipeline redis, :prepare, :run, :after_run
