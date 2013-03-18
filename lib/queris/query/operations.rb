@@ -287,7 +287,6 @@ module Queris
             puts "optimization reduced union(?) operand from #{size} to #{smallsize}"
             op.preintersect(smallkey, key)
           elsif page && page.size * m < size
-            page.in_use!
             puts "paging reduced union(?) operand from #{size} to #{page.size}"
             op.preintersect(page.key, key)
           end
@@ -311,7 +310,6 @@ module Queris
           #puts "optimization reduced intersect operand from #{smallestsize} to #{smallsize}"
           smallestop.preintersect(smallkey, smallestkey)
         elsif page && page.size * m < smallestsize
-          page.in_use!
           smallestop.preintersect(page.key, smallestkey)
         end
         if smallestsize < smallsize

@@ -12,10 +12,8 @@ module Queris
         @ops=sortops
         @pagesize=page_size
         @ttl=ttl
-        @temp_key_ttl=120 #2min
         @page=0
       end
-      attr_accessor :temp_key_ttl
       def key
         "#{@prefix}page:#{Queris.digest(@ops.join)}:#{@pagesize}:#{@page}"
       end
@@ -70,8 +68,7 @@ module Queris
         ready
       end
       
-      def in_use!; puts "page #{key} in use"; @in_use=true; end
-      def in_use?; @in_use; end
+      
       def source_key
         raise NotImplemented, "paging by multiple sorts not yet implemented" if @ops.count > 1
         binding.pry if @ops.first.nil?
@@ -82,10 +79,10 @@ module Queris
       end
       def created?; @created==@page; end
       def create_page(redis)
-        binding.pry
         llp = fluxcap(@last_loaded_page)
         llp=nil if llp==""
-        return if (llp && llp == @page) || !in_use?
+        return if (llp && llp == @page)
+        redis.eval("redis.log(redis.LOG_WARNING, 'want page #{@page}!!!!!!!!1')")
         Queris.run_script(:create_page_if_absent, redis, [key, source_key], [@pagesize * @page, @pagesize * (@page + 1), @ttl])
       end
       private
@@ -99,7 +96,7 @@ module Queris
     end
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
-    attr_reader :subqueries, :ttl
+    attr_reader :subqueries, :ttl, :temp_key_ttl
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
         arg, model = model, model[:model]
@@ -118,6 +115,7 @@ module Queris
       @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
       self.ttl=arg[:ttl] || 600 #10 minutes default time-to-live
+      @temp_key_ttl = arg[:temp_key_ttl] || 300
       @trace=nil
       live! if arg[:live]
       realtime! if arg[:realtime]
@@ -459,12 +457,12 @@ module Queris
       each_operand do |op|
         tkeys |= op.temp_keys
       end
-      tkeys << @page.key if paged? && @page.in_use?
+      tkeys << @page.key if paged?
       tkeys
     end
     private :reusable_temp_keys
     def reusable_temp_keys?
-      return true if paged? && @page.in_use?
+      return true if paged?
       ops.each {|op| return true if op.temp_keys?}
       nil
     end
