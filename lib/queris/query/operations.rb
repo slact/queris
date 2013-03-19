@@ -15,7 +15,11 @@ module Queris
           [(Query === index ? index.id : index.name).to_sym, value]
         end
         def key
-          index.key_for_query value
+          if is_query? && @optimize_subquery_key
+            @temp_key ||= index.results_key(:as_optimized_subquery)
+          else
+            index.key_for_query value
+          end
         end
         def optimized_key(whichkey=nil)
           k=whichkey || key
@@ -27,6 +31,7 @@ module Queris
           end
           k
         end
+        
         def split
           if Array === key && Enumerable === value
             raise ClientError, "Sanity check failed - different number of keys and values, bailing." if key.length != value.length
@@ -64,23 +69,33 @@ module Queris
           temp_keys << preintersect_key
           preintersect_key
         end
+        def delayed_optimize_query(smallkey, multiplier)
+          @optimize_subquery_key = smallkey
+          @optimize_threshold_multiplier = multiplier
+        end
+        
         def optimized?
           @optimized && !@optimized.empty?
         end
         attr_reader :optimization_key
         
-        def run_optimizations(redis)
+        def run_optimization(redis)
           if @preintersect
             @preintersect.each do |k, smallkey|
               #puts "running optimization - preintersecting #{k} and #{smallkey}"
               Queris.run_script(:query_intersect_optimization, redis, [@optimized[k], k, smallkey])
             end
             #puts "preintersected some stuff"
-          else
+          elsif is_query? && @optimize_subquery_key
+            Queris.run_script(:subquery_intersect_optimization, redis, [ key, index.key, @optimize_subquery_key], [ @optimize_threshold_multiplier ])
             #puts "no optimizations to run"
           end
         end
-        
+        def cleanup_optimization(redis)
+           if is_query? && @optimize_subquery_key
+             Queris.run_script(:subquery_intersect_optimization_cleanup, redis, [ key, index.key ])
+           end
+        end
         def json_redis_dump(op_name = nil)
           ret = []
           miniop = {}
@@ -126,6 +141,11 @@ module Queris
             op.index.ensure_rangehack_exists(r, op.value, q)
           end
           op.gather_key_sizes(r)
+        end
+      end
+      def query_run_stage_release(r,q)
+        operands.each do |op|
+          op.index.clear_rangehack_keys if Queris::RangeIndex === op.index
         end
       end
       
@@ -228,33 +248,34 @@ module Queris
       def run(redis, target, first=false, trace_callback=false)
         subqueries_on_slave = !subqueries.empty? && redis != Queris.redis(:master)
         
-        if subqueries_on_slave || optimized?
-          #prevent dummy result string on master from race-conditioning its way into the query
-          redis.multi
-          Queris.run_script :delete_if_string, redis, subqueries.map{|s| s.key} if subqueries_on_slave
-        end
-        operands.each do |op| 
-          op.run_optimizations(redis)
-          op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op 
-        end
-        unless trace_callback
-          redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
-        else
-          operands.each do |operand|
-            operand.split.each do |op| #ensure one key per operand
-              keys = [ target, op.key ]
-              weights = [target_key_weight, operand_key_weight(op)]
-              if first
-                keys.shift; weights.shift
-                first = false
+        redis.multi do |r| 
+        r=redis
+          if subqueries_on_slave || optimized?
+            #prevent dummy result string on master from race-conditioning its way into the query
+
+            Queris.run_script :delete_if_string, redis, subqueries.map{|s| s.key} if subqueries_on_slave
+          end
+          operands.each do |op| 
+            op.run_optimization(redis)
+            op.index.before_query_op(redis, target, op.value, op) if op.index.respond_to? :before_query_op 
+            op.cleanup_optimization(redis)
+          end
+          unless trace_callback
+            redis.send self.class::COMMAND, target, keys(target, first), :weights => weights(first)
+          else
+            operands.each do |operand|
+              operand.split.each do |op| #ensure one key per operand
+                keys = [ target, op.key ]
+                weights = [target_key_weight, operand_key_weight(op)]
+                if first
+                  keys.shift; weights.shift
+                  first = false
+                end
+                redis.send self.class::COMMAND, target, keys, :weights => weights
+                trace_callback.call(self, op, target) if trace_callback
               end
-              redis.send self.class::COMMAND, target, keys, :weights => weights
-              trace_callback.call(self, op, target) if trace_callback
             end
           end
-        end
-        if subqueries_on_slave || optimized?
-          redis.exec
         end
         operands.each { |op| op.index.after_query_op(redis, target, op.value, op) if op.index.respond_to? :after_query_op }
       end
@@ -283,11 +304,14 @@ module Queris
       def optimize(smallkey, smallsize, page=nil)
         m = self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER
         super do |key, size, op|
-          if smallsize * m < size
-            puts "optimization reduced union(?) operand from #{size} to #{smallsize}"
+          if op.is_query? && !op.index.paged?
+            puts "optimizing unpaged subquery #{op.index} later"
+            op.delayed_optimize_query(smallkey, m)
+          elsif smallsize * m < size
+            puts "optimization reduced union(?) operand #{op} from #{size} to #{smallsize}"
             op.preintersect(smallkey, key)
           elsif page && page.size * m < size
-            puts "paging reduced union(?) operand from #{size} to #{page.size}"
+            puts "paging reduced union(?) operand #{op} from #{size} to #{page.size}"
             op.preintersect(page.key, key)
           end
         end
@@ -303,9 +327,12 @@ module Queris
       def optimize(smallkey, smallsize, page=nil)
         smallestkey, smallestsize, smallestop = Float::INFINITY, Float::INFINITY, nil
         m = self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER
+        #subquery_ops=[]
         super do |key, size, op|
           smallestkey, smallestsize, smallestop = key, size, op if size < smallestsize
+          #subquery_ops << op if op.is_query?
         end
+        #no need to preintersect subqueries for intersects - it's not trivial (size may not be available before query subquery is run), and it's not terribly advantageous
         if smallsize * m < smallestsize
           #puts "optimization reduced intersect operand from #{smallestsize} to #{smallsize}"
           smallestop.preintersect(smallkey, smallestkey)

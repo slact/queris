@@ -54,7 +54,7 @@ module Queris
           @page=0
           puts "seeking next page... will be #{@page} last_loaded = #{last}, cur_count = #{cur_count}, total max = #{fluxcap @total_count}"
           false
-        elsif cur_count < range.max && ((last + 1) * size < fluxcap(@total_count))
+        elsif cur_count < range.max && !no_more_pages?
           @page = last + 1
           puts "seeking next page... will be #{@page} last_loaded = #{last}, cur_count = #{cur_count}, total max = #{fluxcap @total_count}"
           false
@@ -63,9 +63,15 @@ module Queris
           true
         end
       end
+      def no_more_pages?
+        last, cur_count = fluxcap(@last_loaded_page), fluxcap(@current_count)
+        return nil if last == "" || last.nil?
+        last=last.to_i
+        (last + 1) * size > fluxcap(@total_count)
+      end
       def ready?
         raise Error, "Asked if a page was ready without having set a desired range first" unless @range
-        ready = (fluxcap(@current_count) || -Float::INFINITY) >= @range.max
+        ready = (fluxcap(@current_count) || -Float::INFINITY) >= @range.max || no_more_pages?
         yield(self) if !ready && block_given?
         ready
       end
@@ -555,7 +561,7 @@ module Queris
     # when no parameters or block present, flush only this query and no subqueries
     def flush(arg={})
       model.run_query_callbacks :before_flush, self
-      return if uses_index_as_results_key?
+      return 0 if uses_index_as_results_key?
       flushed = 0
       if block_given? #efficiency hackety hack - anonymous blocs are heaps faster than bound ones
         subqueries.each { |sub| flushed += sub.flush arg, &Proc.new }
@@ -1041,8 +1047,8 @@ module Queris
             if op.respond_to? method_name
               op.send method_name, r, self
             end
-            if op.index.respond_to? method_name
-              op.index.send method_name, self
+            if !op.is_query? && op.index.respond_to?(method_name)
+              op.index.send method_name, r, self
             end
           end
         end
@@ -1054,6 +1060,7 @@ module Queris
     
     def run_pipeline(redis, *stages)
       puts "query run pipelines START [#{stages.join ', '}]"
+      t0=Time.new.utc.to_f
       #redis.pipelined do |r|
       r = redis
         stages.each do |stage|
@@ -1061,7 +1068,7 @@ module Queris
         end
         yield(r, self) if block_given?
       #end
-      puts "query run pipelines END [#{stages.join ', '}]"
+      puts "query run pipelines END t=#{Time.new.utc.to_f - t0} [#{stages.join ', '}]"
     end
     
     def run_callbacks(event, with_subqueries=true)

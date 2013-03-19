@@ -436,19 +436,24 @@ module Queris
     
     #there's no ZRANGESTORE, so we need to extract the desired range
     #to a temporary zset first
+    attr_accessor :rangehack_keys
     def ensure_rangehack_exists(redis, val, query)
       #copy to temp key if needed
-      runstate_ready = query.runstate_key(:ready) #query ready runstate key
+      rangehack_keys||={}
       unless val.nil?
         rangehack_key = key_for_query val
+        return if rangehack_keys[rangehack_key]
         val = (val..val) unless Enumerable === val
-        Queris.run_script :make_rangehack_if_needed, redis, [rangehack_key, key, query.runstate_key(:ready)], [val.begin, val.end, val.exclude_end?]
+        Queris.run_script :make_rangehack_if_needed, redis, [rangehack_key, key, query.runstate_key(:ready)], [self.val(val.begin), self.val(val.end), val.exclude_end?]
         #can be spiky-shit slow if whole zset must be copied
         query.add_temp_key(rangehack_key)
       end
     end
     def rangehack?(val)
       not val.nil?
+    end
+    def clear_rangehack_keys
+      rangehack_keys={}
     end
 
     def temp_keys(val=nil)
