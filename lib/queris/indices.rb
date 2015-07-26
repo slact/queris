@@ -506,6 +506,7 @@ module Queris
     def key_for_query(val=nil)
       key
     end
+    def ensure_rangehack_exists(*arg); end #nothing
     def usable_as_results?(val)
       false #because we always need to run stuff before query
     end
@@ -537,6 +538,7 @@ module Queris
     def stateless?
       false
     end
+    def ensure_rangehack_exists(*arg); end #nothing
     def add(obj, value=nil)
       increment(obj, value)
     end

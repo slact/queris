@@ -3,105 +3,11 @@ require 'json'
 require 'securerandom'
 require "queris/query/operations"
 require "queris/query/trace"
+require "queris/query/timer"
+require "queris/query/page"
+
 module Queris
   class Query
-    class Page
-      attr_accessor :page, :range
-      def initialize(prefix, sortops, page_size, ttl)
-        @prefix=prefix
-        @ops=sortops
-        @pagesize=page_size
-        @ttl=ttl
-        @page=0
-      end
-      def key
-        "#{@prefix}page:#{Queris.digest(@ops.join)}:#{@pagesize}:#{@page}"
-      end
-      def size; @pagesize; end
-      def volatile_query_keys(q)
-        [ q.results_key(:last_loaded_page) ]
-      end
-      def gather_data(redis, results_key, pagecount_key)
-        #puts "gather page data for key #{results_key}"
-        @current_count= Queris.run_script :multisize, redis, [results_key]
-        @last_loaded_page ||= redis.get pagecount_key
-        @total_count ||= redis.zcard source_key
-      end
-      def inspect_query(r, q)
-        gather_data(r, q.results_key, q.results_key(:last_loaded_page))
-        gather_ready_data(r, q)
-      end
-      def query_run_stage_after_run(r, q)
-        puts "write last_loaded_page for #{q}"
-        llp = fluxcap(@last_loaded_page)
-        llp=llp.to_i if llp
-        @last_loaded_page = @page
-        r.set q.results_key(:last_loaded_page), fluxcap(@last_loaded_page)
-        inspect_query(r, q)
-      end
-      def gather_ready_data(r, q)
-        puts "gather paged ready data for #{self}"
-        @ready = Queris.run_script(:paged_query_ready, r, [q.results_key, q.results_key(:exists), source_key, q.runstate_key(:ready)])
-      end
-      
-      def seek
-        last, cur_count = fluxcap(@last_loaded_page), fluxcap(@current_count)
-        last=nil if last == ""
-        last=last.to_i unless last.nil?
-        cur_count=cur_count.to_i unless cur_count.nil?
-        @key=nil
-        if last.nil?
-          @page=0
-          puts "seeking next page... will be #{@page} last_loaded = #{last}, cur_count = #{cur_count}, total max = #{fluxcap @total_count}"
-          false
-        elsif cur_count < range.max && !no_more_pages?
-          @page = last + 1
-          puts "seeking next page... will be #{@page} last_loaded = #{last}, cur_count = #{cur_count}, total max = #{fluxcap @total_count}"
-          false
-        else
-          puts "no need to seek, we are here"
-          true
-        end
-      end
-      def no_more_pages?
-        last, cur_count = fluxcap(@last_loaded_page), fluxcap(@current_count)
-        return nil if last == "" || last.nil?
-        last=last.to_i
-        (last + 1) * size > fluxcap(@total_count)
-      end
-      def ready?
-        raise Error, "Asked if a page was ready without having set a desired range first" unless @range
-        ready = (fluxcap(@current_count) || -Float::INFINITY) >= @range.max || no_more_pages?
-        yield(self) if !ready && block_given?
-        ready
-      end
-      
-      
-      def source_key
-        raise NotImplemented, "paging by multiple sorts not yet implemented" if @ops.count > 1
-        binding.pry if @ops.first.nil?
-        @ops.first.keys[1]
-      end
-      def source_id
-        Queris.digest source_key
-      end
-      def created?; @created==@page; end
-      def create_page(redis)
-        llp = fluxcap(@last_loaded_page)
-        llp=nil if llp==""
-        return if (llp && llp == @page)
-        redis.eval("redis.log(redis.LOG_WARNING, 'want page #{@page}!!!!!!!!1')")
-        Queris.run_script(:create_page_if_absent, redis, [key, source_key], [@pagesize * @page, @pagesize * (@page + 1) -1, @ttl])
-      end
-      private
-      def fluxcap(val)#possible future value
-        begin
-          Redis::Future === val ? val.value : val
-        rescue Redis::FutureNotReady
-          nil
-        end
-      end
-    end
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
     attr_reader :subqueries, :ttl, :temp_key_ttl
@@ -125,6 +31,7 @@ module Queris
       self.ttl=arg[:ttl] || 600 #10 minutes default time-to-live
       @temp_key_ttl = arg[:temp_key_ttl] || 300
       @trace=nil
+      @pageable = arg[:pageable] || arg[:paged]
       live! if arg[:live]
       realtime! if arg[:realtime]
       @created_at = Time.now.utc
@@ -435,8 +342,6 @@ module Queris
     def run_static_query(r, force=nil)
       #puts "running static query #{self.id}, force: #{force || "no"}"
     
-      puts "RUN_STATIC_QUERY#{@model.name} #{explain} #{force ? "forced" : ''} full query"
-
       temp_results_key = results_key "running:#{SecureRandom.hex}"
       trace_callback = @trace ? @trace.method(:op) : nil
 
@@ -586,6 +491,15 @@ module Queris
     end
     alias :clear :flush
     
+    
+    def range(range)
+      raise ArgumentError, "Range, please." unless Range === range
+      pg=make_page
+      pg.range=range
+      use_page pg
+      self
+    end
+    
     #flexible query results retriever
     #results(x..y) from x to y
     #results(x, y) same
@@ -601,16 +515,14 @@ module Queris
       opt[:range]=(arg.shift .. arg.shift) if Numeric === arg[0] && arg[0].class == arg[1].class
       opt[:range]=(0..arg.shift) if Numeric === arg[0]
       opt[:raw] = true if arg.member? :raw
-      if opt[:range] && !sort_ops.empty?
-        pg=make_page
-        pg.range=opt[:range]
-        use_page pg
+      if opt[:range] && !sort_ops.empty? && pageable?
+        range opt[:range]
         run :no_update => !realtime?
       else
         use_page nil
         run :no_update => !realtime?
       end
-      
+      @timer.start("results") if @timer
       key = results_key
       case (keytype=redis.type(key))
       when 'set'
@@ -640,7 +552,7 @@ module Queris
       else
         return []
       end
-      @profile.start :results_time
+      @timer.start :results
       if block_given? && opt[:replace_command]
         res = yield cmd, key, first || 0, last || -1, rangeopt
       elsif @from_hash && !opt[:raw]
@@ -689,13 +601,15 @@ module Queris
           res.map!(&Proc.new).compact!
         end
       end
-      @profile.finish :results_time
-      @profile.save
+      if @timer
+        @timer.finish :results
+        puts "Timing for #{self}: \r\n  #{@timer}"
+      end
       res
     end
     
     def make_page
-      Page.new(@redis_prefix, sort_ops, model.page_size, ttl)
+      Query::Page.new(@redis_prefix, sort_ops, model.page_size, ttl)
     end
     private :make_page
     
@@ -705,8 +619,10 @@ module Queris
     end
 
     def use_page(page)
-      puts "use page #{page ? page : 'nil'} for #{self}"
       @results_key=nil
+      if !pageable?
+        return nil
+      end
       raise ArgumentError, "must be a Query::Page" unless page.nil? || Page === page
       if block_given?
         temp=@page
@@ -720,6 +636,15 @@ module Queris
     end
     def paged?
       @page
+    end
+    def pageable?
+      @pageable
+    end
+    def pageable!
+      @pageable = true
+    end
+    def unpageable!
+      @pageable = false
     end
 
     def member?(id)
@@ -927,7 +852,8 @@ module Queris
           live: @live,
           realtime: @realtime,
           from_hash: @from_hash,
-          delete_missing: @delete_missing
+          delete_missing: @delete_missing,
+          pageable: pageable?
         }
       }
     end
@@ -1000,9 +926,8 @@ module Queris
       keys.uniq
     end
     
-    
+    attr_accessor :timer
     def new_run
-      puts "new run for #{self}"
       @run_id = SecureRandom.hex
       @runstate_keys={}
       @ready = nil
@@ -1025,7 +950,7 @@ module Queris
     end
     
     def run_stage(stage, r, recurse=true)
-      puts "query run stage #{stage} START for #{self}"
+      #puts "query run stage #{stage} START for #{self}"
       method_name = "query_run_stage_#{stage}".to_sym
       yield(r) if block_given?
       
@@ -1055,12 +980,13 @@ module Queris
       end
       #and finally, the meat
       self.send method_name, r, self if respond_to? method_name
-      puts "query run stage #{stage} END for #{self}"
+      #puts "query run stage #{stage} END for #{self}"
     end
     
     def run_pipeline(redis, *stages)
-      puts "query run pipelines START [#{stages.join ', '}]"
-      t0=Time.new.utc.to_f
+      #{stages.join ', '}
+      pipesig = "pipeline #{stages.join ','}"
+      @timer.start pipesig
       #redis.pipelined do |r|
       r = redis
         stages.each do |stage|
@@ -1068,7 +994,7 @@ module Queris
         end
         yield(r, self) if block_given?
       #end
-      puts "query run pipelines END t=#{Time.new.utc.to_f - t0} [#{stages.join ', '}]"
+      @timer.finish pipesig
     end
     
     def run_callbacks(event, with_subqueries=true)
@@ -1076,8 +1002,6 @@ module Queris
       model.run_query_callbacks event, self
       self
     end
-    
-    
     
     def query_run_stage_begin(r,q)
       if uses_index_as_results_key?
@@ -1127,11 +1051,6 @@ module Queris
         end
       end
     end
-    
-    def query_run_stage_after_run(r, q)
-      puts "ready? check for reals but not really"
-      
-    end
 
     def query_run_stage_release(r,q)
       return unless @reserved
@@ -1153,7 +1072,6 @@ module Queris
     end
     
     def ready?(r=nil, subs=true)
-      puts "ready? #{self}"
       return true if uses_index_as_results_key? || fluxcap(@ready)
       r ||= redis
       ready = if paged?
@@ -1165,7 +1083,6 @@ module Queris
     end
     def gather_ready_data(r)
       unless paged?
-        puts "gather unpaged query ready data for #{self}"
         @ready = Queris.run_script :unpaged_query_ready, r, [ results_key, results_key(:exists), runstate_key(:ready) ]
       end
     end
@@ -1173,13 +1090,11 @@ module Queris
     
     def run(opt={})
       raise ClientError, "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
-      puts "run #{self}"
+      @timer = Query::Timer.new
       #parse run options
       force = opt[:force]
       force = nil if Numeric === force && force <= 0
-      
-      @profile.id=self #this line appears to be obsolete.
-      
+
       run_callbacks :before_run
       if uses_index_as_results_key?
         #do nothing, we're using a results key directly from an index which is guaranteed to already exist
@@ -1191,7 +1106,7 @@ module Queris
       #run this sucker
       #the following logic must apply to ALL queries (and subqueries),
       #since all queries run pipeline stages in 'parallel' (on the same redis pipeline)
-      @profile.start :time
+      @timer.start :time
       run_pipeline redis, :begin do |r, q|
         run_stage :inspect, r
         @page.inspect_query(r, self) if paged?
@@ -1209,8 +1124,16 @@ module Queris
           run_pipeline redis, :prepare, :run, :after_run
         end
         run_pipeline redis_master, :release
+      else
+        if live? && !opt[:no_update]
+          @timer.start :live_update
+          live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
+          @trace.message "Live query update: #{live_update_msg}" if @trace
+          @timer.finish :live_update
+        end
+        @trace.message "Query results already exist, no trace available." if @trace
       end
-      @profile.finish :time
+      @timer.finish :time
       Queris::RedisStats.querying = false
     end
     private
