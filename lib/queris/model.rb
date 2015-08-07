@@ -1,3 +1,4 @@
+require "redis"
 module Queris
   
   class Model
@@ -210,6 +211,7 @@ module Queris
       raise SchemaError, "Can't load #{self.class.name} with id #{id} -- model was specified index_only, so it was never saved." if index_only
       unless hash
         hash_future, hash_exists = nil, nil
+        hash_key
         (opt[:redis] || redis).multi do |r|
           hash_future = r.hgetall hash_key
           hash_exists = r.exists hash_key

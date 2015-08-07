@@ -106,7 +106,7 @@ module Queris
       class << redis.client
         protected
         alias :_default_logging :logging
-        if Object.const_defined? 'ActiveSupport'
+        if Object.const_defined?('ActiveSupport') && ActiveSupport.const_defined?("Notifications")
           #the following is one ugly monkey(patch).
           # we assume that, since we're in Railsworld, the Redis logger
           # is up for grabs. It would be cleaner to wrap the redis client in a class, 
@@ -360,9 +360,11 @@ if Object.const_defined? 'Rails'
 end
 #ugly rake hooks
 if Object.const_defined? 'Rake'
-  class QuerisTasks < Rails::Railtie
-    rake_tasks do
-      Dir[File.join(File.dirname(__FILE__),'tasks/*.rake')].each { |f| load f }
+  if Object.const_defined? 'Rails'
+    class QuerisTasks < Rails::Railtie
+      rake_tasks do
+        Dir[File.join(File.dirname(__FILE__),'tasks/*.rake')].each { |f| load f }
+      end
     end
   end
 end
