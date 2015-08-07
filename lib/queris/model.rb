@@ -124,7 +124,6 @@ module Queris
       raise Error, "id cannot be an Array" if Array === nid
       raise Error, "id already exists and is #{self.id}" unless overwrite || self.id.nil?
       @id= nid
-      super
       self
     end
     def id=(nid)
