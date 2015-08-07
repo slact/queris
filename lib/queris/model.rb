@@ -119,13 +119,16 @@ module Queris
       @redis = arg[:redis]
     end
 
-    def set_id(id, overwrite=false)
+    def set_id(nid, overwrite=false)
+      raise Error, "id cannot be a Hash" if Hash === nid
+      raise Error, "id cannot be an Array" if Array === nid
       raise Error, "id already exists and is #{self.id}" unless overwrite || self.id.nil?
-      @id = id
+      @id= nid
+      super
       self
     end
-    def id= (new_id)
-      set_id new_id
+    def id=(nid)
+      set_id nid
     end
 
     def save
