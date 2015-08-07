@@ -265,7 +265,7 @@ module Queris
       @script_hash||={}
       unless (hash=@script_hash[name])
         contents = script(name)
-        raise  Queris::Exception, "Unknown redis script #{name}." unless contents
+        raise  Error, "Unknown redis script #{name}." unless contents
         hash = Queris.digest contents
         @script_hash[name] = hash
       end

@@ -436,16 +436,26 @@ module Queris
     
     #there's no ZRANGESTORE, so we need to extract the desired range
     #to a temporary zset first
-    def before_query_slave(redis, val, operation=nil)
+    attr_accessor :rangehack_keys
+    def ensure_rangehack_exists(redis, val, query)
       #copy to temp key if needed
+      rangehack_keys||={}
       unless val.nil?
         rangehack_key = key_for_query val
-        Queris.run_script :copy_key_if_absent, redis, [rangehack_key, key] #can be spiky-shit slow if whole zset must be copied
+        return if rangehack_keys[rangehack_key]
         val = (val..val) unless Enumerable === val
-        remove_inverse_range redis, rangehack_key, val
-        operation.temp_keys << rangehack_key
+        Queris.run_script :make_rangehack_if_needed, redis, [rangehack_key, key, query.runstate_key(:ready)], [self.val(val.begin), self.val(val.end), val.exclude_end?]
+        #can be spiky-shit slow if whole zset must be copied
+        query.add_temp_key(rangehack_key)
       end
     end
+    def rangehack?(val)
+      not val.nil?
+    end
+    def clear_rangehack_keys
+      rangehack_keys={}
+    end
+
     def temp_keys(val=nil)
       val.nil? ? [] : [ key_for_query(val) ]
     end
@@ -496,6 +506,7 @@ module Queris
     def key_for_query(val=nil)
       key
     end
+    def ensure_rangehack_exists(*arg); end #nothing
     def usable_as_results?(val)
       false #because we always need to run stuff before query
     end
@@ -527,6 +538,7 @@ module Queris
     def stateless?
       false
     end
+    def ensure_rangehack_exists(*arg); end #nothing
     def add(obj, value=nil)
       increment(obj, value)
     end

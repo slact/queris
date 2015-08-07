@@ -3,75 +3,14 @@ require 'json'
 require 'securerandom'
 require "queris/query/operations"
 require "queris/query/trace"
+require "queris/query/timer"
+require "queris/query/page"
+
 module Queris
   class Query
-    class Page
-      attr_accessor :page
-      def initialize(prefix, sortops, page_size, ttl, page=0)
-        @prefix=prefix
-        @ops=sortops
-        @pagesize=page_size
-        @ttl=ttl
-        @page=page
-      end
-      def size; @pagesize; end
-      attr_writer :current_count, :last_loaded_page, :total_count
-      define_method(:current_count) { fval(@current_count) || 0 }
-      define_method(:last_loaded_page) do
-        r=fval(@last_loaded_page)
-        r.nil? ? nil : r.to_i
-      end
-      define_method(:total_count) { fval(@total_count) || 0 }
-      
-      def key
-        "#{@prefix}page:#{Queris.digest(@ops.join)}:#{@pagesize}:#{@page}"
-      end
-      
-      def page_in(range)
-        @key=nil
-        @desired_range = range
-        if last_loaded_page.nil?
-          @page, @last_loaded_page=0, 0
-          false
-        elsif current_count < range.max && ((last_loaded_page + 1) * size < total_count)
-          @page = last_loaded_page + 1
-          false
-        else
-          true
-        end
-      end
-      def ready?
-        current_count > (@desired_range && @desired_range.max)
-      end
-      def in_use!; puts "page #{key} in use"; @in_use=true; end
-      def in_use?; @in_use; end
-      def source_key
-        raise NotImplemented, "paging by multiple sorts not yet implemented" if @ops.count > 1
-        binding.pry if @ops.first.nil?
-        @ops.first.keys[1]
-      end
-      def source_id
-        Queris.digest source_key
-      end
-      def gather_data(redis, results_key, pagecount_key)
-        self.current_count= Queris.run_script :multisize, redis, [results_key]
-        self.last_loaded_page= redis.get pagecount_key
-        self.total_count= redis.zcard source_key
-      end
-      def created?; @created==@page; end
-      def create_page(redis)
-        return if @created==@page || !in_use?
-        @created = @page
-        Queris.run_script(:create_page_if_absent, redis, [key, source_key], [@pagesize * @page, @pagesize * (@page+1), @ttl])
-      end
-      private
-      def fval(val)#possible future value
-        Redis::Future === val ? val.value : val
-      end
-    end
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
-    attr_reader :subqueries, :ttl
+    attr_reader :subqueries, :ttl, :temp_key_ttl
     def initialize(model, arg=nil, &block)
       if model.kind_of?(Hash) and arg.nil?
         arg, model = model, model[:model]
@@ -90,7 +29,9 @@ module Queris
       @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []
       self.ttl=arg[:ttl] || 600 #10 minutes default time-to-live
+      @temp_key_ttl = arg[:temp_key_ttl] || 300
       @trace=nil
+      @pageable = arg[:pageable] || arg[:paged]
       live! if arg[:live]
       realtime! if arg[:realtime]
       @created_at = Time.now.utc
@@ -124,41 +65,12 @@ module Queris
       @redis || Queris.redis(:slave) || model.redis || redis_master
     end
     
-    def use_redis(redis_instance)
+    def use_redis(redis_instance) #seems obsolete with the new run pipeline
       @redis = redis_instance
       subqueries.each {|sub| sub.use_redis redis_instance}
       self
     end
 
-    def stats
-      raise Error, "Query isn't profiled, no stats available" if @profile.nil?
-      @profile.load
-    end
-    
-    #TODO: obsolete this
-    def track_stats?
-      @track_stats
-    end
-    
-    #TODO: obsolete this
-    def stats_key
-      "#{@redis_prefix}:stats:#{Queris.digest explain}"
-    end
-    
-    def time_cached
-      Time.at(redis.hget(stats_key, 'time_cached').to_f || 0)
-    end
-    
-    def set_time_cached(val)
-      redis.hset stats_key, 'time_cached', val.to_f
-    end
-    
-    def is_stale?
-      if @check_staleness.kind_of? Proc
-        @check_staleness.call self
-      end
-    end
-    
     #retrieve query parameters, as fed through union and intersect and diff
     def param(param_name)
       @params[param_name.to_sym]
@@ -391,182 +303,33 @@ module Queris
     def volatile_query_keys
       #first element MUST be the existence flag key
       #second element MUST be the results key
-      volatile = [results_key(:exists), results_key, results_key(:marshaled)]
-      volatile << results_key(:live) if live?
+      volatile = [ results_key(:exists), results_key ]
+      volatile |=[ results_key(:live), results_key(:marshaled) ] if live?
+      volatile |= @page.volatile_query_keys(self) if paged?
       volatile
     end
     
+    def add_temp_key(k)
+      @temp_keys ||= {}
+      @temp_keys[k]=true
+    end
+    
+    def temp_keys
+      @temp_keys ||= {}
+      @temp_keys.keys
+    end
     #all keys related to a query
     def all_query_keys
       all = volatile_query_keys
-      all << results_key(:pages)
-    end
-    
-    #check for query existence and atomically extend its ttl so that the query keys do not expire while said query is running. useful for wrapping query meat
-    def ensure_existence(force=nil, subquery=nil)
-      # redis expires keys ONLY on master, and propagates to slaves by issuing DEL commands.
-      # if we don't renew an existing query on master before it is executed, a race condition may arise
-      # when a master sends DELetes just after said query is done running on a slave.
-      #existing query ttl will be extended to MINIMUM_QUERY_TTL to ensure it will not expire while the query is being prepared or running
-      unless @known_to_exist
-        #puts "ensuring #{subquery ? "subquery" : "query"} #{self.id} exists"
-        return true if uses_index_as_results_key?
-        #check for existence on master
-        @known_to_exist = {}
-        unless subquery
-          redis.multi { ops.each { |op| op.before_query_slave(redis) } }
-          redis_master.multi {gather_master_query_data}
-        else
-          ops.each { |op| op.before_query_slave(redis) }
-          gather_master_query_data
-        end
-        if redis_master != redis
-          #what's on the slave?
-          @known_to_exist[:query_on_slave] = Queris.run_script :match_key_type, redis, [results_key], [:set, :zset]
-        end
-      end
-      unless block_given?
-        return @known_to_exist[:query_on_master]
-      end
-      
-      query_exists = existence_ensured?
-      yield force || query_exists
-      
-      #okay, this query is now ready
-      redis_master.multi do |r|
-        if reusable_temp_keys?
-          puts "temp keys (#{reusable_temp_keys.count}): #{reusable_temp_keys.join ', '}"
-          Queris.run_script :expire_temp_query_keys, r, reusable_temp_keys, [@temp_ttl || 300]
-        end
-        if !paged? || @page.page==0
-          r.setex results_key(:exists), ttl, 1
-          r.setnx results_key, 1 unless redis_master == redis
-          r.expire results_key, ttl
-          if live?
-            r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) unless @known_to_exist[:marshaled]
-            unless @known_to_exist[:live]
-              now=Time.now.utc.to_f
-              all_live_indices.each do |i| 
-                r.zadd results_key(:live), now, i.live_delta_key
-              end
-              r.expire results_key(:live), ttl
-            end
-          end
-          if paged?
-            r.setnx results_key(:pages), 'foo'
-            r.expire results_key(:pages), ttl
-          end
-        end
-      end
-      @known_to_exist=nil
-      self
-    end
-    
-    def gather_master_query_data
-      min_ttl = self.class::MINIMUM_QUERY_TTL
-      @known_to_exist[:query_on_master] = Queris.run_script :query_ensure_existence, redis_master, volatile_query_keys, [ttl, min_ttl, redis_master == redis]
-      if live?
-        @known_to_exist[:marshaled] = redis_master.exists results_key(:marshaled)
-        @known_to_exist[:live]= redis_master.exists results_key(:live)
-      end
-    end
-    private :gather_master_query_data
-    
-    def ensure_subquery_existence(force=nil)
-      #puts "ensuring subquery existence for #{self.id}"
-      redis_master.multi do
-        if redis_master != redis
-          redis.multi { subqueries.each {|sub| sub.ensure_existence(force, true)} }
-        else
-          subqueries.each {|sub| sub.ensure_existence(force, true)}
-        end
-      end
-    end
-    
-    def existence_ensured?
-      if @known_to_exist.nil? || @known_to_exist.empty?
-        return false
-      end
-      @known_to_exist.each do |k,v|
-        begin
-          @known_to_exist[k]=v.value if Redis::Future === v
-        rescue Exception => e
-          return false #not ready yet
-        end
-      end
-      if redis_master == redis
-        res = @known_to_exist[:query_on_master]
-      else
-        res = @known_to_exist[:query_on_slave]
-      end
-      !!res
+      all |= temp_keys
+      all
     end
 
-    
-    #check for the existence of a result set. We need to do this in case the result set is empty
-    def exists?(r=nil)
-      r||=redis
-      return true if uses_index_as_results_key?
-      raise ClientError, "No redis connection to check query existence" if r.nil?
-      Queris.run_script :query_exists_locally, r, [results_key(:exists), results_key]
-    end
-    
-    def run(opt={})
-      raise ClientError, "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
-      @profile.id=self
-
-      force = opt[:force] || is_stale?
-      force = nil if Numeric === force && force <= 0
-      #puts "run query #{self.id} force: #{force || "no"}"
-      @trace = (opt[:trace] || @must_trace) ? Trace.new(self, (opt[:trace] || @must_trace)) : false
-      Queris::RedisStats.querying=true unless opt[:subquery] #this is for stats tracking purposes, really ought to be in a before_run query callback
-      model.run_query_callbacks :before_run, self
-      if uses_index_as_results_key?
-        #do nothing, we're using a results key directly
-        @profile.record :cache_hit, 1
-        @trace.message "Using index as results key." if @trace
-        set_time_cached Time.now if track_stats?
-      else
-        ensure_existence do |exists|
-          @profile.start :time
-          if force || !exists || (paged? && !@page.ready?)
-            @profile.record :cache_miss, 1
-            force_sub = (Numeric === force ? force - 1 : force)
-            ensure_subquery_existence unless force_sub
-            #run missing queries
-            subqueries.each do |sub|
-              sub.run(opt.merge(:subquery => true, :trace => @trace, :force => force_sub)) if force || !sub.existence_ensured?
-            end
-            run_static_query force
-          else
-            if live? && !opt[:no_update]
-              live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
-              @trace.message "Live query update: #{live_update_msg}" if @trace
-            end
-            @trace.message "Query results already exist, no trace available." if @trace
-            @profile.record :cache_hit, 1
-          end
-          @profile.finish :time
-          @profile.save
-        end
-      end
-
-      if @resort #just sort
-        #TODO: profile resorts
-        redis.multi do |predis|
-          sort_ops.each { |op| op.run predis, results_key }
-        end
-      end
-      Queris::RedisStats.querying = false unless opt[:subquery] #this is for stats tracking purposes, really ought to be in a before_run query callback
-      self
-    end
-    alias :query :run
-    
     def optimize
       smallkey, smallest = nil, Float::INFINITY
-      #puts "optimizing query #{self}"
+      puts "optimizing query #{self}"
       ops.reverse_each do |op|
-        #puts "optimizing op #{op}"
+        puts "optimizing op #{op}"
         op.notready!
         smallkey, smallest = op.optimize(smallkey, smallest, @page)
       end
@@ -576,77 +339,43 @@ module Queris
       @no_optimize=true
       subqueries.each &:no_optimize!
     end
-    def run_static_query(force=nil)
+    def run_static_query(r, force=nil)
       #puts "running static query #{self.id}, force: #{force || "no"}"
     
-      #puts "QUERY #{@model.name} #{explain} #{force ? "forced" : ''} full query"
-      #begin
-        @profile.start :own_time
-        temp_results_key = results_key "querying:#{SecureRandom.hex}"
-        trace_callback = @trace ? @trace.method(:op) : nil
+      temp_results_key = results_key "running:#{SecureRandom.hex}"
+      trace_callback = @trace ? @trace.method(:op) : nil
 
-        #optimize that shit
-        optimize unless @no_optimize
-        redis.pipelined do |pipelined_redis|
-#        pipelined_redis = redis #for debugging
-          @page.create_page(pipelined_redis) if paged?
-          first_op = ops.first
-          [ops, sort_ops].each do |ops|
-            ops.each do |op|
-              op.run pipelined_redis, temp_results_key, first_op == op, trace_callback
-            end
-          end
-          pipelined_redis.multi do |r|
-            if paged?
-              Queris.run_script :delete_if_string, r, [results_key]
-              r.zunionstore results_key, [results_key, temp_results_key], :aggregate => 'max'
-              r.del temp_results_key
-            else
-              Queris.run_script :move_key, r, [temp_results_key, results_key]
-              r.setex results_key(:exists), ttl, 1
-            end
-          end
-          if paged?
-            pipelined_redis.setex results_key(:pages), ttl, @page.page
-            @page.last_loaded_page = @page.page
-            @current_count=Queris.run_script(:multisize, pipelined_redis, [results_key])
-          end
+      #optimize that shit
+      optimize unless @no_optimize
+      
+      first_op = ops.first
+      [ops, sort_ops].each do |ops|
+        ops.each do |op|
+          op.run r, temp_results_key, first_op == op, trace_callback
         end
-        @profile.finish :own_time
-        set_time_cached Time.now if track_stats?
-  #    rescue Redis::CommandError => e
-   #     debug={}
-    #    debug[self]=redis.type results_key
-     #   debug[temp_results_key]=redis.type temp_results_key
-      #  all_subqueries.each do |sub|
-       #   debug[sub]=redis.type results_key
-        #end
-  #      msg = [e.to_s]
-   #     debug.each do |k,v|
-    #      unless %w(set zset none).member?(v)
-     #       if Query === k
-      #        msg << "#{k} #{k.key} (#{v})"
-  #          else
-   #           msg << "#{k} (#{v})"
-    #        end
-     #     end
-      #  end
- #       raise RedisError, msg.join("; ")
-#      end
+      end
+      
+      if paged?
+        r.zunionstore results_key, [results_key, temp_results_key], :aggregate => 'max'
+        r.del temp_results_key
+      else
+        Queris.run_script :move_key, r, [temp_results_key, results_key]
+        r.setex results_key(:exists), ttl, 1
+      end
     end
     private :run_static_query
     
     def reusable_temp_keys
       tkeys = []
-      ops.each do |op|
+      each_operand do |op|
         tkeys |= op.temp_keys
       end
-      tkeys << @page.key if paged? && @page.in_use?
+      tkeys << @page.key if paged?
       tkeys
     end
     private :reusable_temp_keys
     def reusable_temp_keys?
-      return true if paged? && @page.in_use?
+      return true if paged?
       ops.each {|op| return true if op.temp_keys?}
       nil
     end
@@ -656,6 +385,15 @@ module Queris
       ret = subqueries.dup
       subqueries.each { |sub| ret.concat sub.all_subqueries }
       ret
+    end
+    
+    def each_subquery(recursive=true) #dependency-ordered
+      subqueries.each do |s|
+        s.each_subquery do |ss|
+          yield ss
+        end
+        yield s
+      end
     end
     
     def trace!(opt={})
@@ -728,7 +466,7 @@ module Queris
     # when no parameters or block present, flush only this query and no subqueries
     def flush(arg={})
       model.run_query_callbacks :before_flush, self
-      return if uses_index_as_results_key?
+      return 0 if uses_index_as_results_key?
       flushed = 0
       if block_given? #efficiency hackety hack - anonymous blocs are heaps faster than bound ones
         subqueries.each { |sub| flushed += sub.flush arg, &Proc.new }
@@ -738,15 +476,29 @@ module Queris
       if flushed > 0 || arg.count==0 || ttl <= (arg[:ttl] || 0) || (uses_index?(*arg[:index])) || block_given? && (yield self)
         #this only works because of the slave EXPIRE hack requiring dummy query results_keys on master.
         #otherwise, we'd have to create the key first (in a MULTI, of course)
-        res = (redis_master || redis).multi do |r|
-          r.del all_query_keys
+        n_deleted = 0
+        (redis_master || redis).multi do |r|
+          all = all_query_keys
+          all.each do |k|
+            r.setnx k, 'baleted'
+          end
+          n_deleted = r.del all 
         end
         @known_to_exist = nil
-        flushed += res.first if res
+        flushed += n_deleted.value
       end
       flushed
     end
     alias :clear :flush
+    
+    
+    def range(range)
+      raise ArgumentError, "Range, please." unless Range === range
+      pg=make_page
+      pg.range=range
+      use_page pg
+      self
+    end
     
     #flexible query results retriever
     #results(x..y) from x to y
@@ -763,21 +515,14 @@ module Queris
       opt[:range]=(arg.shift .. arg.shift) if Numeric === arg[0] && arg[0].class == arg[1].class
       opt[:range]=(0..arg.shift) if Numeric === arg[0]
       opt[:raw] = true if arg.member? :raw
-      if opt[:range] && !sort_ops.empty?
-        pg=make_page
-        redis.multi do |r| 
-          pg.gather_data(r, results_key, results_key(:pages))
-        end
-        use_page pg
-        until pg.page_in opt[:range]
-          run :no_update => !realtime?
-          pg.current_count= @current_count
-        end
+      if opt[:range] && !sort_ops.empty? && pageable?
+        range opt[:range]
+        run :no_update => !realtime?
       else
         use_page nil
         run :no_update => !realtime?
       end
-      
+      @timer.start("results") if @timer
       key = results_key
       case (keytype=redis.type(key))
       when 'set'
@@ -807,7 +552,7 @@ module Queris
       else
         return []
       end
-      @profile.start :results_time
+      @timer.start :results
       if block_given? && opt[:replace_command]
         res = yield cmd, key, first || 0, last || -1, rangeopt
       elsif @from_hash && !opt[:raw]
@@ -856,13 +601,15 @@ module Queris
           res.map!(&Proc.new).compact!
         end
       end
-      @profile.finish :results_time
-      @profile.save
+      if @timer
+        @timer.finish :results
+        puts "Timing for #{self}: \r\n  #{@timer}"
+      end
       res
     end
     
     def make_page
-      Page.new(@redis_prefix, sort_ops, model.page_size, ttl)
+      Query::Page.new(@redis_prefix, sort_ops, model.page_size, ttl)
     end
     private :make_page
     
@@ -873,6 +620,9 @@ module Queris
 
     def use_page(page)
       @results_key=nil
+      if !pageable?
+        return nil
+      end
       raise ArgumentError, "must be a Query::Page" unless page.nil? || Page === page
       if block_given?
         temp=@page
@@ -887,9 +637,19 @@ module Queris
     def paged?
       @page
     end
+    def pageable?
+      @pageable
+    end
+    def pageable!
+      @pageable = true
+    end
+    def unpageable!
+      @pageable = false
+    end
 
     def member?(id)
       id = id.id if model === id
+      use_page nil
       run :no_update => !realtime?
       case t = redis.type(results_key)
       when 'set'
@@ -1092,7 +852,8 @@ module Queris
           live: @live,
           realtime: @realtime,
           from_hash: @from_hash,
-          delete_missing: @delete_missing
+          delete_missing: @delete_missing,
+          pageable: pageable?
         }
       }
     end
@@ -1155,7 +916,7 @@ module Queris
         end
       end
     end
-    
+
     def all_index_keys
       keys = []
       [ops, sort_ops].each do |ops|
@@ -1164,8 +925,226 @@ module Queris
       keys << key
       keys.uniq
     end
+    
+    attr_accessor :timer
+    def new_run
+      @run_id = SecureRandom.hex
+      @runstate_keys={}
+      @ready = nil
+      @itshere = {}
+      @temp_keys = {}
+      @reserved = nil
+    end
+    private :new_run
+    attr_accessor :run_id
+    def runstate_keys
+      @runstate_keys ||= {}
+      @runstate_keys.keys
+    end
+    def runstate_key(sub=nil)
+      @runstate_keys ||= {}
+      k="#{redis_prefix}run:#{run_id}"
+      k << ":#{sub}"if sub
+      @runstate_keys[k]=true
+      k
+    end
+    
+    def run_stage(stage, r, recurse=true)
+      #puts "query run stage #{stage} START for #{self}"
+      method_name = "query_run_stage_#{stage}".to_sym
+      yield(r) if block_given?
+      
+      #page first
+      @page.send method_name, r, self if paged? && @page.respond_to?(method_name)
+      
+      #then subqueries
+      each_subquery do |sub| 
+        #assumes this iterator respects subquery dependency ordering (deepest subqueries first)
+        sub.run_stage stage, r, false
+      end
+      #now operations, indices etc.
+      [ops, sort_ops].each do |arr|
+        arr.each do |operation|
+          if operation.respond_to? method_name
+            operation.send method_name, r, self
+          end
+          operation.operands.each do |op|
+            if op.respond_to? method_name
+              op.send method_name, r, self
+            end
+            if !op.is_query? && op.index.respond_to?(method_name)
+              op.index.send method_name, r, self
+            end
+          end
+        end
+      end
+      #and finally, the meat
+      self.send method_name, r, self if respond_to? method_name
+      #puts "query run stage #{stage} END for #{self}"
+    end
+    
+    def run_pipeline(redis, *stages)
+      #{stages.join ', '}
+      pipesig = "pipeline #{stages.join ','}"
+      @timer.start pipesig
+      #redis.pipelined do |r|
+      r = redis
+        stages.each do |stage|
+          run_stage(stage, r)
+        end
+        yield(r, self) if block_given?
+      #end
+      @timer.finish pipesig
+    end
+    
+    def run_callbacks(event, with_subqueries=true)
+      each_subquery { |s| s.model.run_query_callbacks(event, s) } if with_subqueries
+      model.run_query_callbacks event, self
+      self
+    end
+    
+    def query_run_stage_begin(r,q)
+      if uses_index_as_results_key?
+        @trace.message "Using index as results key." if @trace_callback
+      end
+      new_run #how procedural...
+    end
+    def query_run_stage_inspect(r,q)
+      gather_ready_data r
+      if live?
+        @itshere[:marshaled]=r.exists results_key(:marshaled)
+        @itshere[:live]=r.exists results_key(:live)
+      end
+    end
+    def query_run_stage_reserve(r,q)
+      return if ready?
+      @reserved = true
+      if live?
+        #marshaled query 
+        r.setex results_key(:marshaled), ttl, JSON.dump(json_redis_dump) unless fluxcap @itshere[:marshaled]
+        unless fluxcap @itshere[:live]
+          now=Time.now.utc.to_f
+          all_live_indices.each do |i|
+            r.zadd results_key(:live), now, i.live_delta_key
+          end
+          r.expire results_key(:live), ttl
+        end
+      end
+      @already_exists = r.get results_key(:exists) if paged?
+      #make sure volatile keys don't disappear
+      min = Query::MINIMUM_QUERY_TTL
+      
+      Queris.run_script :add_low_ttl, r, [ *volatile_query_keys, runstate_key(:low_ttl) ], [ min, min ]
+    end
 
+    def query_run_stage_prepare(r,q)
+      return unless @reserved
+    end
+
+    def query_run_stage_run(r,q)
+      return unless @reserved
+      unless ready?
+        run_static_query r
+      else
+        if live?
+          @live_update_msg = Queris.run_script(:update_query, r, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
+        end
+      end
+    end
+
+    def query_run_stage_release(r,q)
+      return unless @reserved
+      r.setnx results_key(:exists), 1
+      if paged? && fluxcap(@already_exists)
+        Queris.run_script :master_expire, r, volatile_query_keys, [ ttl, nil, true ]
+        Queris.run_script :master_expire, r, reusable_temp_keys, [ temp_key_ttl, nil, true ]
+      else
+        Queris.run_script :master_expire, r, volatile_query_keys, [ ttl , true, true]
+        Queris.run_script :master_expire, r, reusable_temp_keys, [ temp_key_ttl, nil, true ]
+      end
+      
+      r.del q.runstate_keys
+      @reserved = nil
+      
+      #make sure volatile keys don't overstay their welcome
+      min = Query::MINIMUM_QUERY_TTL
+      Queris.run_script :undo_add_low_ttl, r, [ runstate_key(:low_ttl) ], [ min ]
+    end
+    
+    def ready?(r=nil, subs=true)
+      return true if uses_index_as_results_key? || fluxcap(@ready)
+      r ||= redis
+      ready = if paged?
+        @page.ready?
+      else
+        fluxcap @ready
+      end
+      ready
+    end
+    def gather_ready_data(r)
+      unless paged?
+        @ready = Queris.run_script :unpaged_query_ready, r, [ results_key, results_key(:exists), runstate_key(:ready) ]
+      end
+    end
+
+    
+    def run(opt={})
+      raise ClientError, "No redis connection found for query #{self} for model #{self.model.name}." if redis.nil?
+      @timer = Query::Timer.new
+      #parse run options
+      force = opt[:force]
+      force = nil if Numeric === force && force <= 0
+
+      run_callbacks :before_run
+      if uses_index_as_results_key?
+        #do nothing, we're using a results key directly from an index which is guaranteed to already exist
+        @trace.message "Using index as results key." if @trace
+        return count(:no_run => true)
+      end
+
+      Queris::RedisStats.querying = true
+      #run this sucker
+      #the following logic must apply to ALL queries (and subqueries),
+      #since all queries run pipeline stages in 'parallel' (on the same redis pipeline)
+      @timer.start :time
+      run_pipeline redis, :begin do |r, q|
+        run_stage :inspect, r
+        @page.inspect_query(r, self) if paged?
+      end
+      if !ready? || force
+        run_pipeline redis_master, :reserve
+        if paged?
+          begin
+            @page.seek
+            run_pipeline redis, :prepare, :run, :after_run do |r, q|
+              @page.inspect_query(r, self)
+            end
+          end until @page.ready?
+        else
+          run_pipeline redis, :prepare, :run, :after_run
+        end
+        run_pipeline redis_master, :release
+      else
+        if live? && !opt[:no_update]
+          @timer.start :live_update
+          live_update_msg = Queris.run_script(:update_query, redis, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
+          @trace.message "Live query update: #{live_update_msg}" if @trace
+          @timer.finish :live_update
+        end
+        @trace.message "Query results already exist, no trace available." if @trace
+      end
+      @timer.finish :time
+      Queris::RedisStats.querying = false
+    end
     private
+    
+    def fluxcap(val) #flux capacitor to safely and blindly fold the Future into the present
+      begin
+        Redis::Future === val ? val.value : val
+      rescue Redis::FutureNotReady
+        nil
+      end
+    end
     
     def use_index *arg
       if (res=@model.redis_index(*arg)).nil?

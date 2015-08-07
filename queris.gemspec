@@ -1,5 +1,6 @@
+
 # -*- encoding: utf-8 -*-
-$:.push File.expand_path("../lib", __FILE__)
+$:.push('lib')
 require "queris/version"
 
 Gem::Specification.new do |s|
@@ -8,17 +9,33 @@ Gem::Specification.new do |s|
   s.authors     = ["Leo P."]
   s.email       = ["queris@slact.net"]
   s.homepage    = ""
-  s.summary     = %q{Redis-backed object indexing and querying module}
-  s.description = %q{We've got indices, foreign indices, ranges, arbitrary numbers of subqueries, and more}
+  s.summary     = "Redis-backed object indexing and querying module"
+  s.description = "We've got indices, foreign indices, ranges, arbitrary numbers of subqueries, and more"
 
-  s.rubyforge_project = "queris"
-
-  s.files         = `git ls-files`.split("\n")
-  s.test_files    = `git ls-files -- {test,spec,features}/*`.split("\n")
-  s.executables   = `git ls-files -- bin/*`.split("\n").map{ |f| File.basename(f) }
+  dependencies = [
+    # Examples:
+    [:runtime, "redis", "~> 3.2.1", :require => ["redis", "redis/connection/hiredis"]],
+    [:runtime, "hiredis"],
+    [:development, "pry"],
+    [:development, "pry-debundle"]
+  ]
+  
+  s.files         = Dir['**/*']
+  s.test_files    = Dir['test/**/*'] + Dir['spec/**/*']
+  s.executables   = Dir['bin/*'].map { |f| File.basename(f) }
   s.require_paths = ["lib"]
-
-  # specify any dependencies here; for example:
-  # s.add_development_dependency "rspec"
-  s.add_runtime_dependency "redis"
+  
+  
+  ## Make sure you can build the gem on older versions of RubyGems too:
+  s.rubygems_version = "2.4.5"
+  s.required_rubygems_version = Gem::Requirement.new(">= 0") if s.respond_to? :required_rubygems_version=
+  s.specification_version = 3 if s.respond_to? :specification_version
+  
+  dependencies.each do |type, name, version|
+    if s.respond_to?("add_#{type}_dependency")
+      s.send("add_#{type}_dependency", name, version)
+    else
+      s.add_dependency(name, version)
+    end
+  end
 end

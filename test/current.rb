@@ -1,7 +1,10 @@
+#!/usr/bin/ruby
+
 $LOAD_PATH.unshift(File.expand_path(File.dirname(__FILE__) + "/../lib"))
 require "redis/connection/hiredis"
 require "redis"
 require "queris"
+require "pry"
 
 Queris.add_redis :master, Redis.new(:host => 'localhost', 
                   :port => 6379, 
