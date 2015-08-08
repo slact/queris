@@ -8,6 +8,8 @@ module Queris
     include ObjectMixin
     include QuerisModelMixin
     
+    @@attr_val_block={}
+    
     class << self
       def redis(redis_client=nil)
         if redis_client.kind_of? Redis
@@ -25,6 +27,10 @@ module Queris
         unless attributes.nil?
           attributes.each do |attr|
             attribute attr
+            if block_given?
+              pp = Proc.new
+              @@attr_val_block[attr.to_sym]=Proc.new
+            end
           end
         end
         @attributes
@@ -33,8 +39,13 @@ module Queris
         @attributes ||= [] #Class instance var
         attr_name = attr_name.to_sym
         raise ArgumentError, "Attribute #{attr_name} already exists in Queris model #{self.name}." if @attributes.member? attr_name
-
+        if block_given?
+          bb=Proc.new
+          @@attr_val_block[attr_name]=bb
+        end
         define_method "#{attr_name}" do |noload=false|
+          binding.pry if @attributes.nil?
+          1
           if (val = @attributes[attr_name]).nil? && !@loaded && !noload && !@noload
             load
             send attr_name, true
@@ -43,6 +54,9 @@ module Queris
           end
         end
         define_method "#{attr_name}=" do |val| #setter
+          if @@attr_val_block[attr_name]
+            val = @@attr_val_block[attr_name].call(val)
+          end
           if @attributes_were[attr_name].nil?
             @attributes_were[attr_name] = @attributes[attr_name] 
           end
@@ -111,18 +125,20 @@ module Queris
     private :run_callbacks
 
     def initialize(id=nil, arg={})
-      set_id id unless id.nil?
       @attributes = {}
       @attributes_to_save = {}
       @attributes_to_incr = {}
       @attributes_were = {}
       @redis = arg[:redis]
+      set_id id unless id.nil?
     end
 
     def set_id(nid, overwrite=false)
-      raise Error, "id cannot be a Hash" if Hash === nid
-      raise Error, "id cannot be an Array" if Array === nid
-      raise Error, "id already exists and is #{self.id}" unless overwrite || self.id.nil?
+      noload do
+        raise Error, "id cannot be a Hash" if Hash === nid
+        raise Error, "id cannot be an Array" if Array === nid
+        raise Error, "id already exists and is #{self.id}" unless overwrite || self.id.nil?
+      end
       @id= nid
       self
     end
@@ -226,6 +242,10 @@ module Queris
       end
       hash.each do |attr_name, val|
         attr = attr_name.to_sym
+        if @@attr_val_block[attr]
+          val = @@attr_val_block[attr].call(val)
+        end
+        
         if (old_val = @attributes[attr]) != val
           @attributes_were[attr] = old_val unless old_val.nil?
           @attributes[attr] = val
