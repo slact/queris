@@ -58,7 +58,7 @@ module Queris
             val = @@attr_val_block[attr_name].call(val)
           end
           if @attributes_were[attr_name].nil?
-            @attributes_were[attr_name] = @attributes[attr_name] 
+            @attributes_were[attr_name] = @attributes[attr_name]
           end
           @attributes_to_save[attr_name]=val
           @attributes[attr_name]=val
@@ -153,11 +153,14 @@ module Queris
         # to ensure atomicity, we unfortunately need two round trips to redis
         begin
           if @attributes_to_save.length > 0
+            attrs_to_save = @attributes_to_save.keys
             bulk_response = redis.pipelined do
               redis.watch key
-              redis.hmget key, *@attributes_to_save.keys
+              redis.hmget key, *attrs_to_save
             end
-            bulk_response.last.each do |attr, val| #sync with server
+            current_saved_attr_vals = bulk_response.last
+            attrs_to_save.each_with_index do |attr,i| #sync with server
+              val=current_saved_attr_vals[i]
               @attributes_were[attr]=val
             end
           end
@@ -174,7 +177,6 @@ module Queris
             end
 
             update_redis_indices if defined? :update_redis_indices
-
             @attributes_to_save.each {|attr, val| @attributes_were[attr]=val }
             r.expire key, expire_sec unless expire_sec.nil?
             run_callbacks :during_save, r
