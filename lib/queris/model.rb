@@ -163,23 +163,23 @@ module Queris
               val=current_saved_attr_vals[i]
               @attributes_were[attr]=val
             end
-          end
-          bulk_response = redis.multi do |r|
-            unless index_only
-              @attributes_to_incr.each do |attr, incr_by_val|
-                r.hincrbyfloat key, attr, incr_by_val #redis server >= 2.6
-                unless (val = send(attr, true)).nil?
-                  @attributes_were[attr]=val
+            bulk_response = redis.multi do |r|
+              unless index_only
+                @attributes_to_incr.each do |attr, incr_by_val|
+                  r.hincrbyfloat key, attr, incr_by_val #redis server >= 2.6
+                  unless (val = send(attr, true)).nil?
+                    @attributes_were[attr]=val
+                  end
                 end
+                r.mapped_hmset key, @attributes_to_save
+                expire_sec = self.class.expire
               end
-              r.mapped_hmset key, @attributes_to_save
-              expire_sec = self.class.expire
-            end
 
-            update_redis_indices if defined? :update_redis_indices
-            @attributes_to_save.each {|attr, val| @attributes_were[attr]=val }
-            r.expire key, expire_sec unless expire_sec.nil?
-            run_callbacks :during_save, r
+              update_redis_indices if defined? :update_redis_indices
+              @attributes_to_save.each {|attr, val| @attributes_were[attr]=val }
+              r.expire key, expire_sec unless expire_sec.nil?
+              run_callbacks :during_save, r
+            end
           end
         end while bulk_response.nil?
         @attributes_to_save.clear
