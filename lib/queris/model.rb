@@ -106,7 +106,7 @@ module Queris
         new(id).load(hash)
       end
 
-      %w(during_save before_save).each do |callback|
+      %w(during_save before_save after_save).each do |callback|
         define_method callback do |&block|
           @callbacks ||= {}
           if block
@@ -184,7 +184,9 @@ module Queris
         end while bulk_response.nil?
         @attributes_to_save.clear
         @attributes_to_incr.clear
-        self
+        ret= self
+        run_callbacks :after_save, redis
+        ret
       end
     end
 
