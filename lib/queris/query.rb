@@ -1094,7 +1094,9 @@ module Queris
       #parse run options
       force = opt[:force]
       force = nil if Numeric === force && force <= 0
-
+      if trace?
+        @trace= Trace.new self, @must_trace
+      end
       run_callbacks :before_run
       if uses_index_as_results_key?
         #do nothing, we're using a results key directly from an index which is guaranteed to already exist
