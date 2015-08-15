@@ -8,7 +8,9 @@ module Queris
     include ObjectMixin
     include QuerisModelMixin
     
-    @@attr_val_block={}
+    def self.attr_val_block
+      @attr_val_block ||= {}
+    end
     
     class << self
       def redis(redis_client=nil)
@@ -28,8 +30,7 @@ module Queris
           attributes.each do |attr|
             attribute attr
             if block_given?
-              pp = Proc.new
-              @@attr_val_block[attr.to_sym]=Proc.new
+              self.attr_val_block[attr.to_sym]=Proc.new
             end
           end
         end
@@ -41,7 +42,7 @@ module Queris
         raise ArgumentError, "Attribute #{attr_name} already exists in Queris model #{self.name}." if @attributes.member? attr_name
         if block_given?
           bb=Proc.new
-          @@attr_val_block[attr_name]=bb
+          self.attr_val_block[attr_name]=bb
         end
         define_method "#{attr_name}" do |noload=false|
           binding.pry if @attributes.nil?
@@ -54,8 +55,8 @@ module Queris
           end
         end
         define_method "#{attr_name}=" do |val| #setter
-          if @@attr_val_block[attr_name]
-            val = @@attr_val_block[attr_name].call(val)
+          if self.class.attr_val_block[attr_name]
+            val = self.class.attr_val_block[attr_name].call(val)
           end
           if @attributes_were[attr_name].nil?
             @attributes_were[attr_name] = @attributes[attr_name]
@@ -246,8 +247,8 @@ module Queris
       end
       hash.each do |attr_name, val|
         attr = attr_name.to_sym
-        if @@attr_val_block[attr]
-          val = @@attr_val_block[attr].call(val)
+        if self.class.attr_val_block[attr]
+          val = self.class.attr_val_block[attr].call(val)
         end
         
         if (old_val = @attributes[attr]) != val
