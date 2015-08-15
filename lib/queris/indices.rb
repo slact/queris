@@ -443,8 +443,8 @@ module Queris
       unless val.nil?
         rangehack_key = key_for_query val
         return if rangehack_keys[rangehack_key]
-        val = (val..val) unless Enumerable === val
-        Queris.run_script :make_rangehack_if_needed, redis, [rangehack_key, key, query.runstate_key(:ready)], [self.val(val.begin), self.val(val.end), val.exclude_end?]
+        val = (val...val) unless Enumerable === val
+        Queris.run_script :make_rangehack_if_needed, redis, [rangehack_key, key, rangehack_set_key, query.runstate_key(:ready)], [self.val(val.begin), self.val(val.end), val.exclude_end?]
         #can be spiky-shit slow if whole zset must be copied
         query.add_temp_key(rangehack_key)
       end
