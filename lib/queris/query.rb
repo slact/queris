@@ -329,7 +329,7 @@ module Queris
       smallkey, smallest = nil, Float::INFINITY
       puts "optimizing query #{self}"
       ops.reverse_each do |op|
-        puts "optimizing op #{op}"
+        #puts "optimizing op #{op}"
         op.notready!
         smallkey, smallest = op.optimize(smallkey, smallest, @page)
       end
@@ -543,7 +543,7 @@ module Queris
           raise ArgumentError, "Query.results :score parameter must be a Range" unless Range === scrange
           first = Queris::to_redis_float(scrange.begin * sort_mult)
           last = Queris::to_redis_float(scrange.end * sort_mult)
-          last = "(#{last}" if scrange.exclude_end?
+          last = "(#{last}" if scrange.exclude_end? #)
           first, last = last, first if sort_mult == -1
           cmd = opt[:reverse] ? :zrevrangebyscore : :zrangebyscore
         else
@@ -721,7 +721,7 @@ module Queris
           range = opt[:score]
           raise ArgumentError, ":score option must be a Range, but it's a #{range.class} instead" unless Range === range
           first = range.begin * sort_mult
-          last = range.exclude_end? ? "(#{range.end.to_f * sort_mult}" : range.end.to_f * sort_mult
+          last = range.exclude_end? ? "(#{range.end.to_f * sort_mult}" : range.end.to_f * sort_mult #)
           first, last = last, first if sort_mult == -1
           redis.zcount(key, first, last)
         else
