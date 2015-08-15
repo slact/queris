@@ -87,13 +87,20 @@ module Queris
       end
 
       def find(id, opt={})
-        if opt[:redis]
-          new(id).load(nil, redis: opt[:redis])
-        else
-          new(id).load
-        end
+        got= get id, opt
+        got.loaded? ? got : nil
       end
       alias :find_cached :find
+      
+      def get(id, opt={})
+        ret=new(id)
+        if opt[:redis]
+          ret.load(nil, redis: opt[:redis])
+        else
+          ret.load
+        end
+        ret
+      end
 
       def find_all #NOT FOR PRODUCTION USE!
         keys = redis.keys "#{prefix}*"
@@ -218,6 +225,10 @@ module Queris
       @attributes_to_save.empty? && @attributes_to_incr.empty?
     end
 
+    def loaded?
+      @loaded && self
+    end
+    
     def delete
       noload do
         key = hash_key
