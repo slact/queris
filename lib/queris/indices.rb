@@ -397,6 +397,10 @@ module Queris
       end
     end
     
+    def rangehack_set_key
+      "#{sorted_set_key}:rangehacks"
+    end
+    
     def update(obj)
       if !(diff = value_diff(obj)).nil?
         increment(obj, diff) unless diff == 0
@@ -411,27 +415,39 @@ module Queris
     def incremental?; true; end
     def handle_range?; true; end
     def usable_as_results?(val)
-       val.nil?
+      val.nil?
     end
     def add(obj, value=nil)
+      id = obj.send(@key)
       my_val = val(value || value_is(obj), obj)
       #obj_id = obj.send(@key)
       #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
-      redis(obj).zadd sorted_set_key, my_val, obj.send(@key)
+      redis(obj).zadd sorted_set_key, my_val, id
+      update_rangehacks :add, id, my_val
       update_live_delta obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{val}')"
     end
     
     def increment(obj, value=nil)
+      id= obj.send(@key)
       my_val = val(value || value_is(obj), obj)
-      redis(obj).zincrby sorted_set_key, my_val, obj.send(@key)
+      redis(obj).zincrby sorted_set_key, my_val, id
+      update_rangehacks :incr, id, my_val
       update_live_delta obj
     end
 
     def remove(obj, value=nil)
-      redis(obj).zrem sorted_set_key, obj.send(@key)
+      id= obj.send(@key)
+      my_val = val(value || value_is(obj), obj)
+      redis(obj).zrem sorted_set_key, id
+      update_rangehacks :del, id, my_val
       update_live_delta obj
       #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name}')"
+    end
+    
+    #double hack
+    def update_rangehacks(action, id, val=nil)
+      Queris.run_script :update_rangehacks, redis, [rangehack_set_key, sorted_set_key], [action, id, val]
     end
     
     #there's no ZRANGESTORE, so we need to extract the desired range
