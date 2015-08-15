@@ -280,7 +280,7 @@ module Queris
       redis_scripts[name.to_sym]=contents
     end
     #load redis lua scripts
-    Dir[File.join(File.dirname(__FILE__),'queris/redis_scripts/*.lua')].each do |path|
+    Dir[File.join(File.dirname(__FILE__),'../data/redis_scripts/*.lua')].each do |path|
       name = File.basename path, '.lua'
       script = IO.read(path)
       Queris.load_lua_script(name, script)
