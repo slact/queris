@@ -1110,6 +1110,12 @@ module Queris
       #since all queries run pipeline stages in 'parallel' (on the same redis pipeline)
       @timer.start :time
       run_pipeline redis, :begin do |r, q|
+        #run live index callbacks
+        all_live_indices.each do |i|
+          if i.respond_to? :before_query
+            i.before_query r, self
+          end
+        end
         run_stage :inspect, r
         @page.inspect_query(r, self) if paged?
       end

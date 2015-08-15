@@ -35,6 +35,10 @@ module Queris
       @key
     end
 
+    def poke(rds=nil, arg=nil)
+      self
+    end
+    
     #needed for server-side query storage
     def json_redis_dump(hash={})
       hash
@@ -516,7 +520,7 @@ module Queris
       self
     end
     def add(*arg)
-      poke(true) if live?
+      poke(nil, true) if live?
       super(*arg)
     end
     def key_for_query(val=nil)
@@ -526,11 +530,12 @@ module Queris
     def usable_as_results?(val)
       false #because we always need to run stuff before query
     end
-    def poke(schedule=false)
-      r=Queris.redis :master #this index costs a roundtrip to master 
+
+    def poke(rds=nil, schedule=false)
+      rds ||= Queris.redis :master #this index costs a roundtrip to master 
       if live?
-        Queris.run_script :update_live_expiring_presence_index, r, [key, live_delta_key], [Time.now.utc.to_f, @ttl, schedule]
-        Queris.run_script :periodic_zremrangebyscore, r, [live_delta_key], [(@delta_ttl/2), '-inf', (Time.now.utc.to_f - @delta_ttl)]
+        Queris.run_script :update_live_expiring_presence_index, rds, [key, live_delta_key], [Time.now.utc.to_f, @ttl, schedule]
+        Queris.run_script :periodic_zremrangebyscore, rds, [live_delta_key], [(@delta_ttl/2), '-inf', (Time.now.utc.to_f - @delta_ttl)]
       else
         r.zremrangebyscore key, '-inf', Time.now.utc.to_f - @ttl
       end
@@ -542,10 +547,9 @@ module Queris
     def wait_time
       Queris.redis.ttl live_queries_key + ":wait"
     end
-    def before_query_op(redis, results_key, val, op=nil)
-      poke #this is gonna cost me a roundtrip to master
-    end
-    def after_query_op(redis, results_key, val, op=nil)
+    
+    def before_query(redis, query=nil)
+      poke(redis) #this is gonna cost me a roundtrip to master
     end
   end
   
