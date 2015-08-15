@@ -189,7 +189,7 @@ module Queris
               run_callbacks :during_save, r
             end
           end
-        end while bulk_response.nil?
+        end while @attributes_to_save.length > 0 && bulk_response.nil?
         @attributes_to_save.clear
         @attributes_to_incr.clear
         ret= self
@@ -292,7 +292,7 @@ module Queris
     end
 
     def hash_key(custom_id=nil)
-      if id.nil?
+      if custom_id.nil? && id.nil?
         @id = new_id
       end
       @hash_key ||= "#{prefix}#{custom_id || id}"
