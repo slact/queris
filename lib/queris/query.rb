@@ -603,7 +603,7 @@ module Queris
       end
       if @timer
         @timer.finish :results
-        puts "Timing for #{self}: \r\n  #{@timer}"
+        #puts "Timing for #{self}: \r\n  #{@timer}"
       end
       res
     end
@@ -1046,6 +1046,7 @@ module Queris
       unless ready?
         run_static_query r
       else
+        
         if live?
           @live_update_msg = Queris.run_script(:update_query, r, [results_key(:marshaled), results_key(:live)], [Time.now.utc.to_f])
         end

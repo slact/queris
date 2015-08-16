@@ -137,7 +137,7 @@ module Queris
       @attributes_to_save = {}
       @attributes_to_incr = {}
       @attributes_were = {}
-      @redis = arg[:redis]
+      @redis = (arg || {})[:redis]
       set_id id unless id.nil?
     end
 

@@ -10,7 +10,7 @@ Gem::Specification.new do |s|
   s.email       = ["queris@slact.net"]
   s.homepage    = ""
   s.summary     = "Redis-backed object indexing and querying module"
-  s.description = "We've got indices, foreign indices, ranges, arbitrary numbers of subqueries, and more"
+  s.description = "We've got indices, foreign indices, ranges, subqueries, realtime queries, "
 
   dependencies = [
     # Examples:
