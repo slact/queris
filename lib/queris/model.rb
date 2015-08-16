@@ -56,7 +56,7 @@ module Queris
         end
         define_method "#{attr_name}=" do |val| #setter
           if self.class.attr_val_block[attr_name]
-            val = self.class.attr_val_block[attr_name].call(val)
+            val = self.class.attr_val_block[attr_name].call(val, self)
           end
           if @attributes_were[attr_name].nil?
             @attributes_were[attr_name] = @attributes[attr_name]
