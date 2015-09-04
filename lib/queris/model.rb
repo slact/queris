@@ -44,10 +44,10 @@ module Queris
           bb=Proc.new
           self.attr_val_block[attr_name]=bb
         end
-        define_method "#{attr_name}" do |noload=false|
+        define_method "#{attr_name}" do |no_attr_load=false|
           binding.pry if @attributes.nil?
           1
-          if (val = @attributes[attr_name]).nil? && !@loaded && !noload && !@noload
+          if (val = @attributes[attr_name]).nil? && !@loaded && !no_attr_load && !noload?
             load
             send attr_name, true
           else
@@ -92,8 +92,9 @@ module Queris
       end
       alias :find_cached :find
       
-      def get(id, opt={})
+      def get(id, opt=nil)
         ret=new(id)
+        opt ||= {}
         if opt[:redis]
           ret.load(nil, redis: opt[:redis])
         else
@@ -229,6 +230,10 @@ module Queris
       @loaded && self
     end
     
+    def deleted?
+      @deleted && seld
+    end
+    
     def delete
       noload do
         key = hash_key
@@ -236,9 +241,9 @@ module Queris
           redis.del key
           delete_redis_indices if defined? :delete_redis_indices
         end
-        @noload=false
-        self
       end
+      @deleted= true
+      self
     end
 
     def load(hash=nil, opt={})
@@ -259,7 +264,7 @@ module Queris
       hash.each do |attr_name, val|
         attr = attr_name.to_sym
         if self.class.attr_val_block[attr]
-          val = self.class.attr_val_block[attr].call(val)
+          val = self.class.attr_val_block[attr].call(val, self)
         end
         
         if (old_val = @attributes[attr]) != val
@@ -299,11 +304,19 @@ module Queris
     end
     alias :key :hash_key
 
+    def to_json(*arg)
+      return @attributes.to_json(*arg)
+    end
+    
     def noload
-      @noload=true
+      @noload||=0
+      @noload+=1
       ret = yield
-      @noload=false
+      @noload-=1
       ret
+    end
+    def noload?
+      (@noload ||0) > 0
     end
 
     private
