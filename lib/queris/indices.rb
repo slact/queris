@@ -511,7 +511,7 @@ module Queris
   class ScoredSearchIndex < RangeIndex
     def initialize(arg)
       @score_attr=arg[:score_attr] || arg[:score_attribute] || arg[:score]
-      @score_val=arg[:score_val] || arg[:score_value] || proc{|x| x.to_f}
+      @score_val=arg[:score_val] || arg[:score_value] || proc {|x, obj| x.to_f}
       @value ||= proc{|x| x}
       raise Index::Error, "ScoredSearchIndex needs :score or :score_attr parameter" if @score_attr.nil?
       super
@@ -520,6 +520,10 @@ module Queris
     def update_rangehacks(*arg); end
     def handle_range?; false; end
     def ensure_rangehack_exists(*arg); end
+    
+    def usable_as_results?(val)
+      true
+    end
     
     def score_is(obj)
       score_attr_val=@score_attr.nil? ? nil : obj.send(@score_attr)
@@ -612,6 +616,19 @@ module Queris
     end
   end
   
+  class AccumulatorSearchIndex < ScoredSearchIndex
+    #attr_accessor :score_val
+    def stateless?
+      false
+    end
+    def ensure_rangehack_exists(*arg); end #nothing
+    def update_rangehacks(*arg); end #also nothing
+    def add(obj, value=nil)
+      increment(obj, value)
+    end
+  end
+  
+  
   class DecayingAccumulatorIndex < AccumulatorIndex
     TIME_OFFSET=Time.new(2015,1,1).to_f #change this every few years to current date to maintain decent index resolution
     attr_reader :half_life
@@ -622,6 +639,27 @@ module Queris
         val * 2.0 **(t(Time.now.to_f)/@half_life)
       end
       super arg
+    end
+    def t(seconds)
+      seconds - TIME_OFFSET
+    end
+  end
+  
+  class DecayingAccumulatorSearchIndex < AccumulatorSearchIndex
+    TIME_OFFSET=Time.new(2015,9,4).to_f #change this every few years to current date to maintain decent index resolution
+    attr_reader :half_life
+    def initialize(arg)
+      @half_life = (arg[:half_life] || arg[:hl]).to_f
+      super arg
+      @real_score_val=@score_val
+      binding.pry if @real_score_val.nil?
+      1+1.1
+      @score_val= Proc.new do |val, obj|
+        val = Float(val)
+        score_attr_val=@score_attr.nil? ? nil : obj.send(@score_attr)
+        val * 2.0 **(t(@real_score_val.call(score_attr_val, obj))/@half_life)
+      end
+      
     end
     def t(seconds)
       seconds - TIME_OFFSET
