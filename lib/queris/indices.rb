@@ -7,6 +7,10 @@ module Queris
   # (and cannot be rebuilt)
   
   class Index
+    
+    class Error < StandardError
+    end
+    
     attr_accessor :name, :redis, :model, :attribute, :live, :delta_ttl
     #live queries is implemented through a time-indexed sorted set of changed objects as they relate to a given live index.
     alias :live? :live
@@ -421,36 +425,41 @@ module Queris
     def usable_as_results?(val)
       val.nil?
     end
-    def add(obj, value=nil)
-      id = obj.send(@key)
-      my_val = val(value || value_is(obj), obj)
-      #obj_id = obj.send(@key)
-      #raise "val too short" if !obj_id || (obj.respond_to?(:empty?) && obj.empty?)
-      redis(obj).zadd sorted_set_key, my_val, id
-      update_rangehacks :add, id, my_val
+    
+    def zcommand(cmd, obj, value)
+      id= obj.send(@key)
+      my_val= val(value || value_is(obj), obj)
+      if cmd==:zrem
+        redis(obj).send cmd, sorted_set_key, id
+      else
+        redis(obj).send cmd, sorted_set_key, my_val, id
+      end
+      update_rangehacks cmd, id, my_val
       update_live_delta obj
-      #redis(obj).eval "redis.log(redis.LOG_WARNING, 'added #{obj.id} to #{name} at #{val}')"
+    end
+    
+    def add(obj, value=nil)
+      zcommand :zadd, obj, value
     end
     
     def increment(obj, value=nil)
-      id= obj.send(@key)
-      my_val = val(value || value_is(obj), obj)
-      redis(obj).zincrby sorted_set_key, my_val, id
-      update_rangehacks :incr, id, my_val
-      update_live_delta obj
+      zcommand :zincrby, obj, value
     end
 
     def remove(obj, value=nil)
-      id= obj.send(@key)
-      my_val = val(value || value_is(obj), obj)
-      redis(obj).zrem sorted_set_key, id
-      update_rangehacks :del, id, my_val
-      update_live_delta obj
-      #redis(obj).eval "redis.log(redis.LOG_WARNING, 'removed #{obj.id} from #{name}')"
+      zcommand :zrem, obj, value
     end
     
     #double hack
     def update_rangehacks(action, id, val=nil)
+      case action
+      when :zrem
+        action=:del
+      when :zincrby
+        action=:incr
+      when :zadd
+        action=:add
+      end
       Queris.run_script :update_rangehacks, redis, [rangehack_set_key, sorted_set_key], [action, id, val]
     end
     
@@ -498,7 +507,45 @@ module Queris
       end
     end
   end
-  
+
+  class ScoredSearchIndex < RangeIndex
+    def initialize(arg)
+      @score_attr=arg[:score_attr] || arg[:score_attribute] || arg[:score]
+      @score_val=arg[:score_val] || arg[:score_value] || proc{|x| x.to_f}
+      @value ||= proc{|x| x}
+      raise Index::Error, "ScoredSearchIndex needs :score or :score_attr parameter" if @score_attr.nil?
+      super
+    end
+    
+    def update_rangehacks(*arg); end
+    def handle_range?; false; end
+    def ensure_rangehack_exists(*arg); end
+    
+    def score_is(obj)
+      score_attr_val=@score_attr.nil? ? nil : obj.send(@score_attr)
+      @score_val.call(score_attr_val, obj)
+    end
+      
+    def zcommand(cmd, obj, value)
+      id= obj.send(@key)
+      my_val= val(value || value_is(obj), obj)
+      if cmd==:zrem
+        redis(obj).send cmd, sorted_set_key(my_val), id
+      else
+        redis(obj).send cmd, sorted_set_key(my_val), score_is(obj), id
+      end
+    end
+
+    def sorted_set_key(val=nil, prefix=nil, raw_val=false)
+      @keyf %[prefix || @model.redis_prefix, val] #alternately, digest(val)
+    end
+    alias :key :sorted_set_key
+    
+    def key_for_query(val=nil)
+      key val
+    end
+  end
+
   class ExpiringPresenceIndex < RangeIndex
     def initialize(arg={})
       raise ArgumentError, "Expiring Presence index must have its time-to-live (:ttl) set." unless arg[:ttl]
@@ -559,17 +606,19 @@ module Queris
       false
     end
     def ensure_rangehack_exists(*arg); end #nothing
+    def update_rangehacks(*arg); end #also nothing
     def add(obj, value=nil)
       increment(obj, value)
     end
   end
   
   class DecayingAccumulatorIndex < AccumulatorIndex
-    TIME_OFFSET=Time.new(2012,1,1).to_f #change this every few years to current date to maintain decent index resolution
+    TIME_OFFSET=Time.new(2015,1,1).to_f #change this every few years to current date to maintain decent index resolution
     attr_reader :half_life
     def initialize(arg)
       @half_life = (arg[:half_life] || arg[:hl]).to_f
       @value = Proc.new do |val|
+        val = Float(val)
         val * 2.0 **(t(Time.now.to_f)/@half_life)
       end
       super arg
@@ -580,6 +629,9 @@ module Queris
   end
   
   class CountIndex < RangeIndex
+    def initialize(*arg)
+      raise "CountIndex is currently broken. Fix it or use something else"
+    end
     def incrby(obj, val)
       redis(obj).zincrby sorted_set_key, val, obj.send(@key)
       if val<0 
