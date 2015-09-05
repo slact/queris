@@ -511,9 +511,10 @@ module Queris
   class ScoredSearchIndex < RangeIndex
     def initialize(arg)
       @score_attr=arg[:score_attr] || arg[:score_attribute] || arg[:score]
-      @score_val=arg[:score_val] || arg[:score_value] || proc {|x, obj| x.to_f}
+      @score_val=arg[:score_val] || arg[:score_value]
       @value ||= proc{|x| x}
-      raise Index::Error, "ScoredSearchIndex needs :score or :score_attr parameter" if @score_attr.nil?
+      raise Index::Error, "ScoredSearchIndex needs :score, :score_attr or :score_val parameter" if @score_attr.nil? && @score_val.nil?
+      @score_val ||= proc {|x, obj| x.to_f}
       super
     end
     
@@ -530,6 +531,7 @@ module Queris
       @score_val.call(score_attr_val, obj)
     end
       
+    
     def zcommand(cmd, obj, value)
       id= obj.send(@key)
       my_val= val(value || value_is(obj), obj)
@@ -548,6 +550,17 @@ module Queris
     def key_for_query(val=nil)
       key val
     end
+    
+    def update(obj)
+      if !(diff = value_diff(obj)).nil?
+        increment(obj, diff) unless diff == 0
+      else
+        score_is, score_was = score_is(obj), score_was(obj)
+        add(obj, val_is) unless val_is == val_was
+        #removal is implicit with the way we're using sorted sets
+      end
+    end
+    
   end
 
   class ExpiringPresenceIndex < RangeIndex

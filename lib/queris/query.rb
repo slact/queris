@@ -410,6 +410,7 @@ module Queris
     def trace(opt={})
       indent = opt[:indent] || 0
       buf = "#{"  " * indent}#{indent == 0 ? 'Query' : 'Subquery'} #{self}:\r\n"
+      buf << "#{"  " * indent}key: #{key}\r\n"
       buf << "#{"  " * indent}ttl:#{ttl}, |#{redis.type(key)} results key|=#{count(:no_run => true)}\r\n"
       buf << "#{"  " * indent}trace:\r\n"
       case @trace
