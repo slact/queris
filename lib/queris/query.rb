@@ -557,6 +557,7 @@ module Queris
       if block_given? && opt[:replace_command]
         res = yield cmd, key, first || 0, last || -1, rangeopt
       elsif @from_hash && !opt[:raw]
+        
         if rangeopt[:limit]
           limit, offset = *rangeopt[:limit]
         else
@@ -571,9 +572,17 @@ module Queris
             obj = model.find_cached my_id, :assume_missing => true
           else
             hash = Hash[*raw_hash] if Array === raw_hash
+            if hash["____score"]
+              score= hash["____score"].to_f
+              hash.delete "____score"
+            end
             unless (obj = model.restore(hash, my_id))
               #we could stil have received an invalid cache object (too few attributes, for example)
               obj = model.find_cached my_id, :assume_missing => true
+            end
+            if score
+              obj.query_score=score if obj.respond_to? :query_score
+              
             end
           end
           if not obj.nil?

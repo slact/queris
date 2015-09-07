@@ -512,6 +512,7 @@ module Queris
     def initialize(arg)
       @score_attr=arg[:score_attr] || arg[:score_attribute] || arg[:score]
       @score_val=arg[:score_val] || arg[:score_value]
+      @lazy_score_update=arg[:lazy_score_update] || arg[:lazy_score] || arg[:lazy_update] || arg[:lazy]
       @value ||= proc{|x| x}
       raise Index::Error, "ScoredSearchIndex needs :score, :score_attr or :score_val parameter" if @score_attr.nil? && @score_val.nil?
       @score_val ||= proc {|x, obj| x.to_f}
@@ -530,10 +531,28 @@ module Queris
       score_attr_val=@score_attr.nil? ? nil : obj.send(@score_attr)
       @score_val.call(score_attr_val, obj)
     end
+    
+    def score_was(obj)
+      if @score_attr.nil?
+        raise Index::Error, "score_was impossile without a score_attr"
+      else
+        binding.pry
+        1+1.23
+        score_attr_val=@score_attr.nil? ? nil : obj.send("#{@score_attr}_was")
+        @score_val.call(score_attr_val, obj)
+      end
+    end
       
     
     def zcommand(cmd, obj, value)
       id= obj.send(@key)
+      if id.nil?
+        if obj.respond_to? @key
+          raise Index::Error, "nil key attribute (#{@key}) for #{self.class.name} of model #{obj.class}"
+        else
+          raise Index::Error, "missing key attribute (#{@key}) for #{self.class.name} of model #{obj.class}"
+        end
+      end
       my_val= val(value || value_is(obj), obj)
       if cmd==:zrem
         redis(obj).send cmd, sorted_set_key(my_val), id
@@ -552,12 +571,20 @@ module Queris
     end
     
     def update(obj)
-      if !(diff = value_diff(obj)).nil?
-        increment(obj, diff) unless diff == 0
+      val_is, val_was = val(value_is(obj)), val(value_was(obj))
+      if val_is == val_was
+        #should we update the score anyway? it's a O(log(N)) operation...
+        if @score_attr
+          sc_is, sc_was = score_is(obj), score_was(obj)
+          if sc_is != sc_was
+            zcommand :add, obj
+          end
+        elsif @lazy_score_update.nil?
+          add(obj, val_is)
+        end
       else
-        score_is, score_was = score_is(obj), score_was(obj)
-        add(obj, val_is) unless val_is == val_was
-        #removal is implicit with the way we're using sorted sets
+        remove(obj, val_was) unless val_was.nil?
+        add(obj, val_is)
       end
     end
     

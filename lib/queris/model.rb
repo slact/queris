@@ -3,6 +3,7 @@ module Queris
   
   class Model
     attr_reader :id
+    attr_accessor :query_score
     include Queris #this doesn't trigger Queris::included as it seems it ought to...
     require "queris/mixin/queris_model"
     include ObjectMixin
