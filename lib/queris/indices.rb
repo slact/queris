@@ -570,6 +570,10 @@ module Queris
       key val
     end
     
+    def update_score(obj, val)
+      zcommand :zadd, obj, val
+    end
+    
     def update(obj)
       val_is, val_was = val(value_is(obj)), val(value_was(obj))
       if val_is == val_was
@@ -577,7 +581,7 @@ module Queris
         if @score_attr
           sc_is, sc_was = score_is(obj), score_was(obj)
           if sc_is != sc_was
-            zcommand :add, obj
+            update_score(obj, val_is)
           end
         elsif @lazy_score_update.nil?
           add(obj, val_is)
@@ -665,6 +669,9 @@ module Queris
     def update_rangehacks(*arg); end #also nothing
     def add(obj, value=nil)
       increment(obj, value)
+    end
+    def update_score(obj, val)
+      zcommand :zincrby, obj, val
     end
   end
   
