@@ -26,10 +26,16 @@ module Queris
       end
 
       #get/setter
-      def attributes(*attributes)
+      def attributes(*arg)
+        if Hash===arg.last
+          attributes = arg[0..-2]
+          opt=arg.last
+        else
+          attributes= arg
+        end
         unless attributes.nil?
           attributes.each do |attr|
-            attribute attr
+            attribute attr, opt
             if block_given?
               self.attr_val_block[attr.to_sym]=Proc.new
             end
@@ -37,9 +43,21 @@ module Queris
         end
         @attributes
       end
-      def attribute(attr_name)
+      def attribute(*arg)
+        if arg.first
+          attr_name = arg.first.to_sym
+        end
+        if arg.count == 2
+          if Hash===arg.last
+            opt=arg.last
+          else
+            raise "Invalid \"attribute\" params" unless arg.last.nil?
+          end
+        elsif arg.count > 2
+          raise "Too many arguments for \"attribute\""
+        end
+        
         @attributes ||= [] #Class instance var
-        attr_name = attr_name.to_sym
         raise ArgumentError, "Attribute #{attr_name} already exists in Queris model #{self.name}." if @attributes.member? attr_name
         if block_given?
           bb=Proc.new
@@ -55,7 +73,24 @@ module Queris
             val
           end
         end
+        
         define_method "#{attr_name}=" do |val| #setter
+          if opt
+            type = opt[:type]
+            if type == Float
+              val=Float(val)
+            elsif type == String
+              val=val.to_s
+            elsif type == Fixnum
+              val=val.to_i
+            elsif type == Symbol
+              val=val.to_sym
+            elsif type.nil?
+              #nothing
+            else
+              raise "Unknown attribute type #{opt[:type]}"
+            end
+          end
           if self.class.attr_val_block[attr_name]
             val = self.class.attr_val_block[attr_name].call(val, self)
           end
