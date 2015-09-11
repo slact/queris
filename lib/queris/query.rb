@@ -922,7 +922,8 @@ module Queris
         elsif data.kind_of? Enumerable
           arg = data
         else
-          arg = [] #SILENTLY FAIL RELOADING QUERY. THIS IS A *DANGER*OUS DESIGN DECISION MADE FOR THE SAKE OF CONVENIENCE.
+          raise Query::Error, "Reloading query failed. data: #{data.to_s}"
+          #arg = [] #SILENTLY FAIL RELOADING QUERY. THIS IS A *DANGER*OUS DESIGN DECISION MADE FOR THE SAKE OF CONVENIENCE.
         end
         arg.each { |n,v| instance_variable_set "@#{n}", v }
       end
