@@ -1,5 +1,5 @@
 local results_key = KEYS[1]
-local command, min, max, hashkeyf, withscores = ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5]
+local command, min, max, hashkeyf, scoremin, scoremax, withscores = ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6], ARGV[7]
 local ids, scores, ids_with_scores = {}, {}, {}
 
 if command == "smembers" then
@@ -14,7 +14,6 @@ elseif command == "zrangebyscore" or command == "zrevrangebyscore" then
 else
   ids_with_scores = redis.call(command, results_key, min, max, "withscores")
 end
-redis.call("echo", "tsize: " .. #ids_with_scores)
 
 redis.call("echo", "yeaaah but no")
 for i, v in ipairs(ids_with_scores) do
@@ -24,12 +23,11 @@ for i, v in ipairs(ids_with_scores) do
     table.insert(scores, v)
   end
 end
-
 local ret, notfound = {}, {}
 for i,id in ipairs(ids) do
   local flathash = redis.call("hgetall", hashkeyf:format(id))
   if #flathash>0 then
-    if withscores then
+    if #withscores>0 then
       table.insert(flathash, "____score")
       table.insert(flathash, scores[i])
     end

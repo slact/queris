@@ -8,6 +8,10 @@ require "queris/query/page"
 
 module Queris
   class Query
+    
+    class Error < StandardError
+    end
+    
     MINIMUM_QUERY_TTL = 30 #seconds. Don't mess with this number unless you fully understand it, setting it too small may lead to subquery race conditions
     attr_accessor :redis_prefix, :created_at, :ops, :sort_ops, :model, :params
     attr_reader :subqueries, :ttl, :temp_key_ttl
@@ -507,7 +511,7 @@ module Queris
     #results(x) first x results
     #results(x..y, :reverse) range in reverse
     #results(x..y, :score =>a..b) results from x to y with scores in given score range
-    #results(x..y, :with_scores) return scores with results as [ [score1, res1], [score2, res2] ... ]
+    #results(x..y, :with_scores) return results with result.query_score attr set to the score
     def results(*arg)
       opt= Hash === arg.last ? arg.pop : {}
       opt[:reverse]=true if arg.member?(:reverse)
@@ -563,7 +567,7 @@ module Queris
         else
           limit, offset = nil, nil
         end
-        raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first || 0, last || -1, @from_hash, limit, offset])
+        raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first || 0, last || -1, @from_hash, limit, offset, rangeopt[:with_scores] && :true])
         res, to_be_deleted = [], []
         raw_res.each_with_index do |raw_hash, i|
           my_id = ids[i]
