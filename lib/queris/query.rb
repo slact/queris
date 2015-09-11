@@ -575,18 +575,13 @@ module Queris
             failed_i.shift
             obj = model.find_cached my_id, :assume_missing => true
           else
-            hash = Hash[*raw_hash] if Array === raw_hash
-            if hash["____score"]
-              score= hash["____score"].to_f
-              hash.delete "____score"
+            if (raw_hash.count % 2) > 0
+              binding.pry
+              1+1.12
             end
-            unless (obj = model.restore(hash, my_id))
+            unless (obj = model.restore(raw_hash, my_id))
               #we could stil have received an invalid cache object (too few attributes, for example)
               obj = model.find_cached my_id, :assume_missing => true
-            end
-            if score
-              obj.query_score=score if obj.respond_to? :query_score
-              
             end
           end
           if not obj.nil?
@@ -620,6 +615,19 @@ module Queris
         #puts "Timing for #{self}: \r\n  #{@timer}"
       end
       res
+    end
+    
+    def result_scores(*ids)
+      val=[]
+      if ids.count == 1 && Array === ids[0]
+        ids=ids[0]
+      end
+      val=redis.multi do |r|
+        ids.each do |id|
+          redis.zscore(results_key, id)
+        end
+      end
+      val
     end
     
     def make_page

@@ -150,7 +150,7 @@ module Queris
       def restore(hash, id)
         new(id).load(hash)
       end
-
+      
       %w(during_save before_save after_save).each do |callback|
         define_method callback do |&block|
           @callbacks ||= {}
@@ -297,20 +297,40 @@ module Queris
           return nil
         end
       end
-      hash.each do |attr_name, val|
-        attr = attr_name.to_sym
-        if self.class.attr_val_block[attr]
-          val = self.class.attr_val_block[attr].call(val, self)
+      case hash
+      when Array
+        attr_name= nil
+        hash.each_with_index do |v, i|
+          if i % 2 == 0 
+            attr_name = v
+            next
+          else
+            raw_load_attr attr_name, v
+          end
         end
-        
-        if (old_val = @attributes[attr]) != val
-          @attributes_were[attr] = old_val unless old_val.nil?
-          @attributes[attr] = val
+        @loaded = true
+      when Hash
+        hash.each do |k, v|
+          raw_load_attr(k, v)
         end
+        @loaded = true
+      else
+        raise Queris::ArgumentError, "Invalid thing to load"
       end
-      @loaded = true
+      
       self
     end
+    
+    def raw_load_attr(attr_name, val)
+      binding.pry if attr_name.nil?
+      1+1.123
+      if attr_name.to_sym == :____score
+        @query_score = val.to_f
+      else
+        self.send "#{attr_name}=", val
+      end
+    end
+    private :raw_load_attr
 
     def import(attrs={})
       attrs.each do |attr_name, val|
