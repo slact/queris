@@ -630,6 +630,10 @@ module Queris
       val
     end
     
+    def result_score(id)
+      result_scores([id]).first
+    end
+    
     def make_page
       Query::Page.new(@redis_prefix, sort_ops, model.page_size, ttl)
     end
