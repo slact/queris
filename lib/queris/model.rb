@@ -80,18 +80,22 @@ module Queris
         define_method "#{attr_name}=" do |val| #setter
           if opt
             type = opt[:type]
-            if type == Float
-              val=Float(val)
-            elsif type == String
-              val=val.to_s
-            elsif type == Fixnum
-              val=val.to_i
-            elsif type == Symbol
-              val=val.to_sym
-            elsif type.nil?
-              #nothing
-            else
-              raise "Unknown attribute type #{opt[:type]}"
+            unless val.nil?
+              if type == Float
+                val=Float(val)
+              elsif type == String
+                val=val.to_s
+              elsif type == Fixnum
+                val = val.to_s if Symbol === val
+                val=val.to_i
+              elsif type == Symbol
+                val = val.to_s if Numeric > val.class # first to string, then to symbol.
+                val=val.to_sym
+              elsif type.nil?
+                #nothing
+              else
+                raise "Unknown attribute type #{opt[:type]}"
+              end
             end
           end
           if self.class.attr_val_block[attr_name]

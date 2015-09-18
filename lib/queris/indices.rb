@@ -172,8 +172,8 @@ module Queris
       val_is, val_was = value_is(obj), value_was(obj)
       if(val_is != val_was)
         no_live_update do
-          remove(obj, val_was)
-          add(obj)
+          remove(obj, val_was) unless val_was.nil?
+          add(obj) unless val_is.nil?
         end
         update_live_delta obj
       end
