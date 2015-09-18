@@ -59,6 +59,16 @@ module Queris
       []
     end
 
+    def load_lua_script(redis, name, contents)
+      begin
+        hash = redis.script 'load', contents
+      rescue Redis::CommandError => e
+        raise ClientError, "Error loading script #{name}: #{e}"
+      end
+      raise Error, "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
+    end
+    private :load_lua_script
+    
     def add_redis(redis, *roles)
       if !(Redis === redis) && (Redis === roles.first) # flipped aguments. that's okay, we accept those, too
         redis, roles = roles.first, [ redis ]
@@ -74,14 +84,9 @@ module Queris
       
       #throw our lua scripts onto the server
       redis_scripts.each do |name, contents|
-        begin
-          hash = redis.script 'load', contents
-        rescue Redis::CommandError => e
-          raise ClientError, "Error loading script #{name}: #{e}"
-        end
-        raise Error, "Failed loading script #{name} onto server: mismatched hash" unless script_hash(name) == hash
+        load_lua_script redis, name, contents
       end
-
+      
       def track_stats?
         @track_stats
       end
@@ -273,17 +278,36 @@ module Queris
     end
     
     def run_script(script, redis, keys=[], args=[])
-      redis.evalsha script_hash(script), keys, args
+      begin
+        redis.evalsha script_hash(script), keys, args
+      rescue Redis::CommandError => e
+        raise Redis::CommandError, e.to_s.gsub(/^ERR Error running script/, "ERR Error running script #{script}")
+        
+      end
     end
     
-    def load_lua_script(name, contents)
-      redis_scripts[name.to_sym]=contents
+    def import_lua_script(name, contents)
+      name=name.to_sym
+      if redis_scripts[name]
+        if redis_scripts[name]==contents
+          raise Queris::Error, "Tried loading script #{name} more than once. this is disallowed."
+        else
+          raise Queris::Error, "A redis lua script names #{name} already exists."
+        end
+      else
+        redis_scripts[name]=contents
+      end
+      all_redises.each do |r|
+        binding.pry
+        1+1.12
+        load_lua_script r, name, contents
+      end
     end
     #load redis lua scripts
     Dir[File.join(File.dirname(__FILE__),'../data/redis_scripts/*.lua')].each do |path|
       name = File.basename path, '.lua'
       script = IO.read(path)
-      Queris.load_lua_script(name, script)
+      Queris.import_lua_script(name, script)
     end
   end
   
