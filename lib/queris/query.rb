@@ -28,7 +28,7 @@ module Queris
       @ops = []
       @sort_ops = []
       @used_index = {}
-      @redis_prefix = arg[:complete_prefix] || ((arg[:prefix] || arg[:redis_prefix] || model.redis_prefix) + self.class.name.split('::').last + ":")
+      @redis_prefix = arg[:complete_prefix] || ((arg[:prefix] || arg[:redis_prefix] || model.prefix) + self.class.name.split('::').last + ":")
       @redis=arg[:redis]
       @profile = arg[:profiler] || model.query_profiler.new(nil, :redis => @redis || model.redis)
       @subqueries = []

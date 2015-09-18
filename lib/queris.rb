@@ -175,7 +175,7 @@ module Queris
       end
       @models.each do |model| 
         if clear
-          delkeys = redis.keys "#{model.redis_prefix}*"
+          delkeys = redis.keys "#{model.prefix}*"
           redis.multi do |r|
             delkeys.each { |k| redis.del k }
           end

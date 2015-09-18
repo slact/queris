@@ -22,7 +22,10 @@ module Queris
       end
 
       def prefix
-        @prefix ||= "#{Queris.redis_prefix}#{self.superclass.name}:#{self.name}:"
+        @prefix ||= "#{Queris.redis_prefix}#{self.superclass.name.split('::').last}:#{self.name}:"
+      end
+      def keyf
+        "#{prefix}%s"
       end
 
       #get/setter

@@ -151,7 +151,7 @@ module Queris
       obj.attribute_diff @attribute if obj.respond_to? :attribute_diff
     end
     def live_delta_key
-      @live_delta_key||="#{@redis_prefix||@model.redis_prefix}#{self.class.name.split('::').last}:#{@name}:live_delta"
+      @live_delta_key||="#{@redis_prefix||@model.prefix}#{self.class.name.split('::').last}:#{@name}:live_delta"
     end
     def no_live_update
       @skip_live_update = true
@@ -209,7 +209,7 @@ module Queris
       else
         id = obj.kind_of?(@model) ? obj.send(@key) : obj
       end
-      (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, id]
+      (@keyf) %[prefix || @redis_prefix || @model.prefix, id]
     end
     alias :key :hash_key
     def update(obj)
@@ -301,7 +301,7 @@ module Queris
       if Enumerable === value
         value.map { |val| set_key val, prefix, raw_val }
       else
-        (@keyf) %[prefix || @redis_prefix || @model.redis_prefix, raw_val ? value : digest(val value)]
+        (@keyf) %[prefix || @redis_prefix || @model.prefix, raw_val ? value : digest(val value)]
       end
     end
     alias :key :set_key
@@ -357,7 +357,7 @@ module Queris
   class PresenceIndex < SearchIndex
     def initialize(arg)
       super arg
-      @counter_keyf = "#{@model.redis_prefix}#{self.class.name.sub(/^.*::/, "")}:#{@name}:#{@attribute}=%s:counter"
+      @counter_keyf = "#{@model.prefix}#{self.class.name.sub(/^.*::/, "")}:#{@name}:#{@attribute}=%s:counter"
       @attribute = @key
       @threshold ||= 1
     end
@@ -394,7 +394,7 @@ module Queris
       @value.call val, obj
     end
     def sorted_set_key(val=nil, prefix=nil, raw_val=false)
-      @keyf %[prefix || @model.redis_prefix, "(...)"]
+      @keyf %[prefix || @model.prefix, "(...)"]
     end
     alias :key :sorted_set_key
     def key_for_query(val=nil)
@@ -562,7 +562,7 @@ module Queris
     end
 
     def sorted_set_key(val=nil, prefix=nil, raw_val=false)
-      @keyf %[prefix || @model.redis_prefix, val] #alternately, digest(val)
+      @keyf %[prefix || @model.prefix, val] #alternately, digest(val)
     end
     alias :key :sorted_set_key
     

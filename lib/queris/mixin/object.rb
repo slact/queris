@@ -78,13 +78,7 @@ module Queris
       def query_profiler; @profiler || DummyProfiler; end
       def profile_queries?; query_profiler.nil?; end
 
-      def redis_prefix (app_name=nil)
-        if @redis_prefix.nil? || !app_name.nil?
-          @redis_prefix = "#{Queris.redis_prefix(app_name)}#{self.name}:"
-        else
-          @redis_prefix
-        end
-      end
+
       def query(arg={}, &block)
         redis_query arg, &block
       end
@@ -112,7 +106,7 @@ module Queris
         q = query
         querykeys = redis.keys "#{q.redis_prefix}*"
         #old keys, too
-        querykeys.concat redis.keys("#{self.redis_prefix}#{q.class.name}*")
+        querykeys.concat redis.keys("#{self.prefix}#{q.class.name}*")
         querykeys.uniq!
         print "Deleting #{querykeys.count} query keys for #{name}..."
         redis.multi do |r|
