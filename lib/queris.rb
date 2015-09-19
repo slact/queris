@@ -282,7 +282,6 @@ module Queris
         redis.evalsha script_hash(script), keys, args
       rescue Redis::CommandError => e
         raise Redis::CommandError, e.to_s.gsub(/^ERR Error running script/, "ERR Error running script #{script}")
-        
       end
     end
     

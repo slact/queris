@@ -536,8 +536,6 @@ module Queris
       if @score_attr.nil?
         raise Index::Error, "score_was impossile without a score_attr"
       else
-        binding.pry
-        1+1.23
         score_attr_val=@score_attr.nil? ? nil : obj.send("#{@score_attr}_was")
         @score_val.call(score_attr_val, obj)
       end
