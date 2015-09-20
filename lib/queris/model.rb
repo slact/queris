@@ -382,7 +382,7 @@ module Queris
     alias :key :hash_key
 
     def to_json(*arg)
-      return @attributes.to_json(*arg)
+      return @attributes.merge(id: self.id).to_json(*arg)
     end
     
     def noload
