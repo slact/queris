@@ -158,7 +158,7 @@ module Queris
         new(id).load(hash)
       end
       
-      %w(during_save before_save after_save).each do |callback|
+      %w(during_save during_save_multi before_save after_save).each do |callback|
         define_method callback do |&block|
           @callbacks ||= {}
           if block
@@ -201,8 +201,8 @@ module Queris
     def save
       key = hash_key #before multi
       noload do
-        run_callbacks :before_save
         # to ensure atomicity, we unfortunately need two round trips to redis
+        run_callbacks :before_save
         begin
           if @attributes_to_save.length > 0
             attrs_to_save = @attributes_to_save.keys
@@ -215,6 +215,9 @@ module Queris
               val=current_saved_attr_vals[i]
               @attributes_were[attr]=val
             end
+            
+            run_callbacks :during_save
+            
             bulk_response = redis.multi do |r|
               unless index_only
                 @attributes_to_incr.each do |attr, incr_by_val|
@@ -230,7 +233,7 @@ module Queris
               update_redis_indices if defined? :update_redis_indices
               @attributes_to_save.each {|attr, val| @attributes_were[attr]=val }
               r.expire key, expire_sec unless expire_sec.nil?
-              run_callbacks :during_save, r
+              run_callbacks :during_save_multi, r
             end
           end
         end while @attributes_to_save.length > 0 && bulk_response.nil?
