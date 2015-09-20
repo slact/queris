@@ -227,6 +227,11 @@ module Queris
                   end
                 end
                 r.mapped_hmset key, @attributes_to_save
+                # a little hacky to first set to "", then delete. 
+                # meh. will optimize when needed.
+                @attributes_to_save.each do |attr, val|
+                  r.hdel(key, attr) if val.nil?
+                end
                 expire_sec = self.class.expire
               end
 
