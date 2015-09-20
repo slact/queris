@@ -320,13 +320,13 @@ module Queris
             attr_name = v
             next
           else
-            raw_load_attr attr_name, v
+            raw_load_attr(attr_name, v, !opt[:nil_only])
           end
         end
         @loaded = true
       when Hash
         hash.each do |k, v|
-          raw_load_attr(k, v)
+          raw_load_attr(k, v, !opt[:nil_only])
         end
         @loaded = true
       else
@@ -336,13 +336,19 @@ module Queris
       self
     end
     
-    def raw_load_attr(attr_name, val)
+    def load_missing #load only missing attributes
+      load nil, nil_only: true
+    end
+    
+    def raw_load_attr(attr_name, val, overwrite=true)
       binding.pry if attr_name.nil?
       1+1.123
       if attr_name.to_sym == :____score
         @query_score = val.to_f
       else
-        self.send "#{attr_name}=", val
+        if overwrite || send(attr_name).nil?
+          send "#{attr_name}=", val
+        end
       end
     end
     private :raw_load_attr
