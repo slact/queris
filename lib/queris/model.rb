@@ -91,6 +91,10 @@ module Queris
               elsif type == Symbol
                 val = val.to_s if Numeric > val.class # first to string, then to symbol.
                 val=val.to_sym
+              elsif type == :boolean || type == :bool
+                val=val ? 1 : 0
+              elsif type == :flag
+                val=val ? 1 : nil
               elsif type.nil?
                 #nothing
               else
