@@ -512,6 +512,7 @@ module Queris
     #results(x..y, :reverse) range in reverse
     #results(x..y, :score =>a..b) results from x to y with scores in given score range
     #results(x..y, :with_scores) return results with result.query_score attr set to the score
+    #results(x..y, :replace => [:foo_id, FooModel]) like an SQL join. returns results replaced by FooModels with ids from foo_id
     def results(*arg)
       opt= Hash === arg.last ? arg.pop : {}
       opt[:reverse]=true if arg.member?(:reverse)
@@ -567,21 +568,31 @@ module Queris
         else
           limit, offset = nil, nil
         end
-        raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first || 0, last || -1, @from_hash, limit, offset, rangeopt[:with_scores] && :true])
+        if opt[:replace]
+          replace=opt[:replace]
+          replace_id_attr=replace.first
+          replace_model=replace.last
+          raise Queris::Error, "replace model must be a Queris model, is instead #{replace_model}" unless replace_model < Queris::Model
+          replace_keyf=replace_model.keyf
+        end
+        raw_res, ids, failed_i = redis.evalsha(Queris::script_hash(:results_from_hash), [key], [cmd, first || 0, last || -1, @from_hash, limit, offset, rangeopt[:with_scores] && :true, replace_keyf, replace_id_attr])
         res, to_be_deleted = [], []
+        
+        result_model= replace.nil? ? model : replace_model
+        
         raw_res.each_with_index do |raw_hash, i|
           my_id = ids[i]
           if failed_i.first == i
             failed_i.shift
-            obj = model.find_cached my_id, :assume_missing => true
+            obj = result_model.find_cached my_id, :assume_missing => true
           else
             if (raw_hash.count % 2) > 0
               binding.pry
               1+1.12
             end
-            unless (obj = model.restore(raw_hash, my_id))
+            unless (obj = result_model.restore(raw_hash, my_id))
               #we could stil have received an invalid cache object (too few attributes, for example)
-              obj = model.find_cached my_id, :assume_missing => true
+              obj = result_model.find_cached my_id, :assume_missing => true
             end
           end
           if not obj.nil?
