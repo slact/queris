@@ -1025,13 +1025,13 @@ module Queris
       #{stages.join ', '}
       pipesig = "pipeline #{stages.join ','}"
       @timer.start pipesig
-      #redis.pipelined do |r|
-      r = redis
+      redis.pipelined do |r|
+        #r = redis
         stages.each do |stage|
           run_stage(stage, r)
         end
         yield(r, self) if block_given?
-      #end
+      end
       @timer.finish pipesig
     end
     
