@@ -386,7 +386,9 @@ module Queris
     alias :key :hash_key
 
     def to_json(*arg)
-      return @attributes.merge(id: self.id).to_json(*arg)
+      rest={id: self.id}
+      rest[:query_score]= self.query_score if query_score
+      @attributes.merge(rest).to_json(*arg)
     end
     
     def noload
