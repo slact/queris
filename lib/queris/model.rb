@@ -286,7 +286,7 @@ module Queris
     end
     
     def deleted?
-      @deleted && seld
+      @deleted && self
     end
     
     def delete
