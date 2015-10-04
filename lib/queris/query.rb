@@ -1070,9 +1070,8 @@ module Queris
       end
       @already_exists = r.get results_key(:exists) if paged?
       #make sure volatile keys don't disappear
-      min = Query::MINIMUM_QUERY_TTL
       
-      Queris.run_script :add_low_ttl, r, [ *volatile_query_keys, runstate_key(:low_ttl) ], [ min, min ]
+      Queris.run_script :add_low_ttl, r, [ *volatile_query_keys, runstate_key(:low_ttl) ], [ Query::MINIMUM_QUERY_TTL ]
     end
 
     def query_run_stage_prepare(r,q)
