@@ -152,10 +152,16 @@ module Queris
 
       def find_all #NOT FOR PRODUCTION USE!
         keys = redis.keys "#{prefix}*"
+        objs = []
         keys.map! do |key|
-          self.find key[prefix.length..-1]
+          begin
+            found = self.find key[prefix.length..-1]
+            objs << found if found
+          rescue Exception => e
+            nil 
+          end
         end
-        keys
+        objs
       end
 
       def restore(hash, id)
