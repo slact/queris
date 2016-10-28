@@ -46,6 +46,7 @@ module Queris
         end
         @attributes
       end
+      
       def attribute(*arg)
         if arg.first
           attr_name = arg.first.to_sym
@@ -92,9 +93,15 @@ module Queris
                 val = val.to_s if Numeric > val.class # first to string, then to symbol.
                 val=val.to_sym
               elsif type == :boolean || type == :bool
-                val=val ? 1 : 0
+                if val=="1" || val==1 || val=="true"
+                  val=true
+                elsif val=="0" || val==0 || val=="false"
+                  val=false
+                else
+                  val=val ? true : false
+                end
               elsif type == :flag
-                val=val ? 1 : nil
+                val=val ? true : nil
               elsif type.nil?
                 #nothing
               else
