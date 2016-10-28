@@ -23,7 +23,7 @@ class User < ActiveRecord::Base
   #declare which attributes to index, and how
   index_attributes :name, :email   #simple set index
   index_range_attribute :age   #sorted set index
-  index_attribute_from UserTags, :attribute => :tag, :key => :userId  #index from a different model
+  index_attribute_from model: UserTags, attribute: :tag, key: :userId  #index from a different model
 end
 ```
 To build indices:
