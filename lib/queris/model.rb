@@ -105,10 +105,12 @@ module Queris
           if self.class.attr_val_block[attr_name]
             val = self.class.attr_val_block[attr_name].call(val, self)
           end
-          if @attributes_were[attr_name].nil?
-            @attributes_were[attr_name] = @attributes[attr_name]
+          if !@loading
+            if @attributes_were[attr_name].nil?
+              @attributes_were[attr_name] = @attributes[attr_name]
+            end
+            @attributes_to_save[attr_name]=val
           end
-          @attributes_to_save[attr_name]=val
           @attributes[attr_name]=val
         end
         define_method "#{attr_name}_was" do 
@@ -181,6 +183,13 @@ module Queris
       end
     end
 
+    def while_loading
+      loading_was=@loading
+      @loading=true
+      yield
+      @loading=loading_was
+    end
+    
     def run_callbacks(callback, redis=nil)
       (self.class.send(callback) || []).each {|block| block.call(self, redis)}
     end
@@ -351,13 +360,13 @@ module Queris
     end
     
     def raw_load_attr(attr_name, val, overwrite=true)
-      binding.pry if attr_name.nil?
-      1+1.123
       if attr_name.to_sym == :____score
         @query_score = val.to_f
       else
         if overwrite || send(attr_name).nil?
-          send "#{attr_name}=", val
+          while_loading do
+            send "#{attr_name}=", val
+          end
         end
       end
     end
