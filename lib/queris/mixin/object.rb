@@ -137,6 +137,37 @@ module Queris
       def redis
         Queris.redis
       end
+      
+      def build_missing_redis_indices
+        missing_indices = redis_indices.select do |index|
+          
+          unless index.skip_create?
+            found = false
+            cursor = "0"
+            loop do
+              cursor, res = redis.scan [cursor, "match", index.keypattern]
+              if res.count > 0
+                found = true
+                break
+              end
+              break if cursor == "0"
+            end
+            
+            if not found then
+              puts "index #{name}:#{index.name} missing (#{index.keypattern})"
+              true
+            else
+              false
+            end
+          end
+        end
+        if missing_indices .count > 0
+          build_redis_indices missing_indices 
+        else 
+          puts "No missing indices for model #{name}."
+        end
+      end
+      
       def build_redis_indices(indices=nil, build_foreign = true, incremental_delete=false)
         indices ||= redis_indices
         foreign_indices = []

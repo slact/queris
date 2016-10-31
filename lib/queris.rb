@@ -167,6 +167,13 @@ module Queris
       all_redises.each { |r| r.client.disconnect }
     end
     
+    def build_missing_indices!
+      @models.each do |model|
+        model.build_missing_redis_indices
+      end
+      self
+    end
+    
     #rebuild all known queris indices
     def rebuild!(clear=false)
       start = Time.now
