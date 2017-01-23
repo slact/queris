@@ -331,7 +331,7 @@ module Queris
 
     def optimize
       smallkey, smallest = nil, Float::INFINITY
-      puts "optimizing query #{self}"
+      #puts "optimizing query #{self}"
       ops.reverse_each do |op|
         #puts "optimizing op #{op}"
         op.notready!

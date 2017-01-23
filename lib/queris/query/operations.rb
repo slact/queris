@@ -305,13 +305,13 @@ module Queris
         m = self.class::OPTIMIZATION_THRESHOLD_MULTIPLIER
         super do |key, size, op|
           if op.is_query? && !op.index.paged?
-            puts "optimizing unpaged subquery #{op.index} later"
+            #puts "optimizing unpaged subquery #{op.index} later"
             op.delayed_optimize_query(smallkey, m)
           elsif smallsize * m < size
-            puts "optimization reduced union(?) operand #{op} from #{size} to #{smallsize}"
+            #puts "optimization reduced union(?) operand #{op} from #{size} to #{smallsize}"
             op.preintersect(smallkey, key)
           elsif page && page.size * m < size
-            puts "paging reduced union(?) operand #{op} from #{size} to #{page.size}"
+            #puts "paging reduced union(?) operand #{op} from #{size} to #{page.size}"
             op.preintersect(page.key, key)
           end
         end
@@ -334,7 +334,7 @@ module Queris
         end
         #no need to preintersect subqueries for intersects - it's not trivial (size may not be available before query subquery is run), and it's not terribly advantageous
         if smallsize * m < smallestsize
-          #puts "optimization reduced intersect operand from #{smallestsize} to #{smallsize}"
+          puts "optimization reduced intersect operand from #{smallestsize} to #{smallsize}"
           smallestop.preintersect(smallkey, smallestkey)
         elsif page && page.size * m < smallestsize
           smallestop.preintersect(page.key, smallestkey)
