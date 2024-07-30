@@ -86,7 +86,7 @@ module Queris
                 val=Float(val)
               elsif type == String
                 val=val.to_s
-              elsif type == Fixnum
+              elsif type == Integer
                 val = val.to_s if Symbol === val
                 val=val.to_i
               elsif type == Symbol

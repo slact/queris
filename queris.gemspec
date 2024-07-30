@@ -14,8 +14,8 @@ Gem::Specification.new do |s|
 
   dependencies = [
     # Examples:
-    [:runtime, "redis", "~> 3.2.1", :require => ["redis", "redis/connection/hiredis"]],
-    [:runtime, "hiredis"],
+    [:runtime, "redis", "~> 5.2.0", :require => ["redis", "hiredis-client"]],
+    [:runtime, "hiredis-client"],
     [:development, "pry"],
     [:development, "pry-debundle"]
   ]

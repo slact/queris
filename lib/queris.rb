@@ -88,52 +88,22 @@ module Queris
       end
       
       def track_stats?
-        @track_stats
+        false
       end
       def track_stats!
-        @track_stats = true
+        raise Error, "Not supported right now"
       end
       def stats
-        return false unless @track_stats
-        puts RedisStats.summary
-        return RedisStats
+        return false
       end
       attr_accessor :log_stats_per_request
       def log_stats_per_request?
-        @log_stats_per_request
+        false
       end
       def log_stats_per_request!
-        track_stats!
-        @log_stats_per_request = true
+        raise Error, "Not supported right now"
       end
       
-      #bolt on our custom logger
-      class << redis.client
-        protected
-        alias :_default_logging :logging
-        if Object.const_defined?('ActiveSupport') && ActiveSupport.const_defined?("Notifications")
-          #the following is one ugly monkey(patch).
-          # we assume that, since we're in Railsworld, the Redis logger
-          # is up for grabs. It would be cleaner to wrap the redis client in a class, 
-          # but I'm coding dirty for brevity. 
-          # THIS MUST BE ADDRESSED IN THE FUTURE
-          def logging(commands)
-            ActiveSupport::Notifications.instrument("command.queris") do
-              start = Time.now.to_f
-              ret = _default_logging(commands) { yield }
-              Queris::RedisStats.record(self, Time.now.to_f - start) if Queris.track_stats?
-              ret
-            end
-          end
-        else
-          def logging(commands)
-            start = Time.now.to_f
-            ret = _default_logging(commands) { yield }
-            Queris::RedisStats.record(self, Time.now.to_f - start) if Queris.track_stats?
-            ret
-          end
-        end
-      end
       redis
     end
     
