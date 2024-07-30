@@ -131,10 +131,10 @@ module Queris
     
     #reconnect all redic clients
     def reconnect
-      all_redises.each { |r| r.client.reconnect }
+      all_redises.each { |r| r.close }
     end
     def disconnect
-      all_redises.each { |r| r.client.disconnect }
+      all_redises.each { |r| r.close }
     end
     
     def build_missing_indices!
